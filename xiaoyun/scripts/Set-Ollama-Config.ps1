@@ -13,17 +13,17 @@
 
 $ErrorActionPreference = "SilentlyContinue"
 
-$py       = "D:\LunaAI\app\AI-Vtuber-20240229\Miniconda3\python.exe"
-$helper   = "D:\LunaAI\xiaoyun\ollama_app_settings.py"
+$py       = "D:\LunaAI\project-nn\runtime\Miniconda3\python.exe"
+$helper   = "D:\LunaAI\project-nn\xiaoyun\ollama_app_settings.py"
 $cfgPath  = "D:\LunaAI\app\AI-Vtuber-20240229\config.json"
 $models   = "D:\OllamaModels"
 $api      = "http://127.0.0.1:11434"
-$logFile  = "D:\LunaAI\xiaoyun\ollama_config.log"
+$logFile  = "D:\LunaAI\project-nn\xiaoyun\ollama_config.log"
 $ollamaDir = Join-Path $env:LOCALAPPDATA "Programs\Ollama"
 $ollamaApp = Join-Path $ollamaDir "ollama app.exe"
 $ollamaExe = Join-Path $ollamaDir "ollama.exe"
-$outLog   = "D:\LunaAI\xiaoyun\logs\ollama_out.log"
-$errLog   = "D:\LunaAI\xiaoyun\logs\ollama_err.log"
+$outLog   = "D:\LunaAI\project-nn\xiaoyun\logs\ollama_out.log"
+$errLog   = "D:\LunaAI\project-nn\xiaoyun\logs\ollama_err.log"
 
 "==== Ollama 稳定化配置 $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') ====" | Set-Content $logFile -Encoding UTF8
 

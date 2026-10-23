@@ -1,6 +1,6 @@
 ﻿# 小芸桌面 - 一键启动器（Windows 原生桌面窗口）
 # 依次：确保对话大脑 or_proxy(8787) 在线 -> 启动小芸后端(8090) -> 弹出桌面伴侣窗口
-# 每一步都会写入 D:\LunaAI\xiaoyun\scripts\启动日志.txt，便于排查
+# 每一步都会写入 D:\LunaAI\project-nn\xiaoyun\scripts\启动日志.txt，便于排查
 $ErrorActionPreference = "SilentlyContinue"
 
 # ---------- 0) 单实例锁：禁止并发启动（★ 防"重复启动"的关键，必须在最前面） ----------
@@ -25,22 +25,22 @@ try{
 }
 if(-not $hasLock){
     $skipMsg = "[{0}] [跳过] 已有一个小芸启动/停止流程正在进行，本次不重复启动。" -f (Get-Date -Format 'HH:mm:ss')
-    Add-Content -Path "D:\LunaAI\xiaoyun\scripts\启动日志.txt" -Value $skipMsg -Encoding UTF8
+    Add-Content -Path "D:\LunaAI\project-nn\xiaoyun\scripts\启动日志.txt" -Value $skipMsg -Encoding UTF8
     Write-Host "已有一个启动/停止流程在进行中，等它完成即可（本次不重复启动）。" -ForegroundColor Yellow
     Start-Sleep -Seconds 5
     exit 0
 }
-$py        = "D:\LunaAI\app\AI-Vtuber-20240229\Miniconda3\python.exe"
-$srv       = "D:\LunaAI\xiaoyun\scripts\xiaoyun_server.py"
-$workdir   = "D:\LunaAI\xiaoyun"
-$outLog    = "D:\LunaAI\xiaoyun\logs\srv_out.log"
-$errLog    = "D:\LunaAI\xiaoyun\logs\srv_err.log"
-$deskPy    = "D:\LunaAI\xiaoyun\.venv\Scripts\pythonw.exe"
-$deskApp   = "D:\LunaAI\xiaoyun\scripts\desktop_app.py"
-$deskPid   = "D:\LunaAI\xiaoyun\scripts\desktop.pid"
-$deskOut   = "D:\LunaAI\xiaoyun\logs\desktop_out.log"
-$deskErr   = "D:\LunaAI\xiaoyun\logs\desktop_err.log"
-$runLog    = "D:\LunaAI\xiaoyun\scripts\启动日志.txt"
+$py        = "D:\LunaAI\project-nn\runtime\Miniconda3\python.exe"
+$srv       = "D:\LunaAI\project-nn\xiaoyun\xiaoyun_server.py"
+$workdir   = "D:\LunaAI\project-nn\xiaoyun"
+$outLog    = "D:\LunaAI\project-nn\xiaoyun\logs\srv_out.log"
+$errLog    = "D:\LunaAI\project-nn\xiaoyun\logs\srv_err.log"
+$deskPy    = "D:\LunaAI\project-nn\xiaoyun\.venv\Scripts\pythonw.exe"
+$deskApp   = "D:\LunaAI\project-nn\xiaoyun\desktop_app.py"
+$deskPid   = "D:\LunaAI\project-nn\xiaoyun\desktop.pid"
+$deskOut   = "D:\LunaAI\project-nn\xiaoyun\logs\desktop_out.log"
+$deskErr   = "D:\LunaAI\project-nn\xiaoyun\logs\desktop_err.log"
+$runLog    = "D:\LunaAI\project-nn\xiaoyun\scripts\启动日志.txt"
 
 "==== 小芸桌面启动日志 $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') ====" | Set-Content $runLog -Encoding UTF8
 function Log($m){
@@ -54,6 +54,14 @@ function Test-Url($u){
 }
 
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+
+# ★ 清理大小写重复的代理变量（WorkBuddy 会话注入 http_proxy + HTTP_PROXY 等成对变量，
+#   PowerShell 5.1 的 Start-Process 构造环境字典时抛「已添加项」直接失败——2026-10-24 实证）。
+#   本脚本启动的服务全部走 127.0.0.1，无需继承代理。
+foreach($k in @("http_proxy","https_proxy","HTTP_PROXY","HTTPS_PROXY","all_proxy","ALL_PROXY")){
+    [Environment]::SetEnvironmentVariable($k, $null, "Process")
+}
+
 Log "用户: $([Security.Principal.WindowsIdentity]::GetCurrent().Name)   管理员: $isAdmin"
 Log "PowerShell: $($PSVersionTable.PSVersion.ToString())"
 Log "pythonw.exe 存在: $(Test-Path $deskPy)"
@@ -235,12 +243,12 @@ if($lis.Count -gt 1){
 # ---------- 2.5) 语音识别 8091（本地 ASR，独立 venv，不吃显存） ----------
 # 只负责"麦克风 -> 文字"，CPU + int8 推理；没起来也不影响文字聊天，
 # 桌宠右下角会提示"语音服务未启动"。
-$asrPy  = "D:\LunaAI\xiaoyun\.venv-asr\Scripts\pythonw.exe"
-$asrApp = "D:\LunaAI\xiaoyun\scripts\asr_service.py"
-$asrLog = "D:\LunaAI\xiaoyun\logs\asr_out.log"
-$asrErr = "D:\LunaAI\xiaoyun\logs\asr_err.log"
+$asrPy  = "D:\LunaAI\project-nn\xiaoyun\.venv-asr\Scripts\pythonw.exe"
+$asrApp = "D:\LunaAI\project-nn\xiaoyun\asr_service.py"
+$asrLog = "D:\LunaAI\project-nn\xiaoyun\logs\asr_out.log"
+$asrErr = "D:\LunaAI\project-nn\xiaoyun\logs\asr_err.log"
 $asrEnv = @{
-    "XIAOYUN_ASR_MODEL" = "D:\LunaAI\xiaoyun\models\faster-whisper-small"
+    "XIAOYUN_ASR_MODEL" = "D:\LunaAI\project-nn\xiaoyun\models\faster-whisper-small"
     "HF_HUB_DISABLE_XET" = "1"
     "HF_HUB_OFFLINE" = "1"
     # 用户明确要求用 USB 麦克风（板载 Realtek 收不到他说话）。该设备底噪较高

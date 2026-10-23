@@ -5,8 +5,8 @@ $lnk = Join-Path $startup "小芸桌面.lnk"
 $ws = New-Object -ComObject WScript.Shell
 $sc = $ws.CreateShortcut($lnk)
 $sc.TargetPath = "powershell.exe"
-$sc.Arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Minimized -File `"D:\LunaAI\xiaoyun\scripts\Start-Xiaoyun.ps1`""
-$sc.WorkingDirectory = "D:\LunaAI\xiaoyun"
+$sc.Arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Minimized -File `"D:\LunaAI\project-nn\xiaoyun\scripts\Start-Xiaoyun.ps1`""
+$sc.WorkingDirectory = "D:\LunaAI\project-nn\xiaoyun"
 $sc.WindowStyle = 7
 $sc.Save()
 Write-Host "[OK] 已设置开机自启：" $lnk -ForegroundColor Green

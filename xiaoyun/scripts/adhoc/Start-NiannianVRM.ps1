@@ -1,4 +1,4 @@
-# Niannian desktop-shell launcher (VRM / BJD page) -- ASCII ONLY, keep it that way.
+﻿# Niannian desktop-shell launcher (VRM / BJD page) -- ASCII ONLY, keep it that way.
 # PowerShell 5.1 reads a BOM-less UTF-8 .ps1 as GBK, so any Chinese char here breaks syntax.
 #
 # What it does, in order:
@@ -29,7 +29,7 @@ $PagePath = $Page.Split("?")[0]
 
 $ErrorActionPreference = "SilentlyContinue"
 
-$root    = "D:\LunaAI\xiaoyun"
+$root    = "D:\LunaAI\project-nn\xiaoyun"
 $deskPy  = "$root\.venv\Scripts\pythonw.exe"
 $deskApp = "$root\desktop_app.py"
 $deskPid = "$root\desktop.pid"

@@ -1,4 +1,4 @@
-# =====================================================================
+﻿# =====================================================================
 #  Preview-Pet.ps1  --  single-model preview window for a PMX pet
 #
 #  Same idea as the Niannian VRM launcher on the desktop:
@@ -25,7 +25,7 @@ param(
 
 $ErrorActionPreference = 'Continue'
 $ProgressPreference = 'SilentlyContinue'   # keep Invoke-WebRequest quiet
-$Root = 'D:\LunaAI\xiaoyun'
+$Root = 'D:\LunaAI\project-nn\xiaoyun'
 $Port = 8765
 $Health = "http://127.0.0.1:$Port/api/models"
 $Pyw    = 'C:\Users\Administrator\.workbuddy\binaries\python\versions\3.13.12\pythonw.exe'

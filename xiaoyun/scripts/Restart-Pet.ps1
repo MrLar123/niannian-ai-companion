@@ -36,7 +36,7 @@ foreach ($n in @('http_proxy', 'https_proxy', 'all_proxy', 'no_proxy',
     [Environment]::SetEnvironmentVariable($n, $null, 'Process')
 }
 
-$workdir  = "D:\LunaAI\xiaoyun"
+$workdir  = "D:\LunaAI\project-nn\xiaoyun"
 $deskPy   = Join-Path $workdir ".venv\Scripts\pythonw.exe"
 $deskApp  = Join-Path $workdir "scripts\desktop_app.py"
 $pageHtml = Join-Path $workdir "pages\desktoppmx.html"

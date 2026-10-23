@@ -11,9 +11,9 @@
 #     3) 杀完后**轮询等待进程真正消失**（最多 15 秒），不再拍脑袋 sleep；
 #     4) 复核改为「窗口 + 挂起状态 + catcher 数量」，报告具体残留，退出码 4 表示仍有残留。
 $ErrorActionPreference = "SilentlyContinue"
-$deskPid = "D:\LunaAI\xiaoyun\scripts\desktop.pid"
-$probePy = "D:\LunaAI\xiaoyun\.venv\Scripts\python.exe"
-$probeSc = "D:\LunaAI\xiaoyun\tools\pet_window_probe.py"
+$deskPid = "D:\LunaAI\project-nn\xiaoyun\scripts\desktop.pid"
+$probePy = "D:\LunaAI\project-nn\xiaoyun\.venv\Scripts\python.exe"
+$probeSc = "D:\LunaAI\project-nn\xiaoyun\tools\pet_window_probe.py"
 
 # 小芸进程的三种身份（与 Start-Xiaoyun.ps1 启动的三个服务一一对应）：
 #   后端 xiaoyun_server.py (Miniconda python.exe, 8090)

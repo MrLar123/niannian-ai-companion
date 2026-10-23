@@ -62,7 +62,7 @@ if($hb -eq 200){
 }
 
 # 3) 桌面窗口环境
-$deskPy = "D:\LunaAI\xiaoyun\.venv\Scripts\pythonw.exe"
+$deskPy = "D:\LunaAI\project-nn\xiaoyun\.venv\Scripts\pythonw.exe"
 if(Test-Path $deskPy){ Write-Host "[OK]   桌面窗口环境存在（.venv）" -ForegroundColor Green }
 else { Write-Host "[问题] 缺少 .venv\Scripts\pythonw.exe，桌面窗口起不来" -ForegroundColor Red }
 
@@ -103,7 +103,7 @@ if($hw -ne 0 -and [W]::IsWindowVisible($hw)){
 }
 
 # 6) 错误日志
-$errLog = "D:\LunaAI\xiaoyun\logs\desktop_err.log"
+$errLog = "D:\LunaAI\project-nn\xiaoyun\logs\desktop_err.log"
 if(Test-Path $errLog){
     $c = Get-Content $errLog -Raw
     if($c -and $c.Trim().Length -gt 0){

@@ -10,7 +10,7 @@ echo Restarting Xiaoyun ASR (8091) ... please wait.
 echo.
 
 setlocal
-set "ROOT=D:\LunaAI\xiaoyun"
+set "ROOT=D:\LunaAI\project-nn\xiaoyun"
 set "PY=%ROOT%\.venv-asr\Scripts\pythonw.exe"
 set "APP=%ROOT%\asr_service.py"
 
@@ -24,7 +24,7 @@ set "XIAOYUN_BAIDU_SECRET_KEY=uIECMsPRBuMHIrk1GT8sL2bRj4ToHskG"
 set "XIAOYUN_BAIDU_DEV_PID=1537"
 
 rem ---- local fallback + microphone ----
-set "XIAOYUN_ASR_MODEL=D:\LunaAI\xiaoyun\models\faster-whisper-small"
+set "XIAOYUN_ASR_MODEL=D:\LunaAI\project-nn\xiaoyun\models\faster-whisper-small"
 set "HF_HUB_DISABLE_XET=1"
 set "HF_HUB_OFFLINE=1"
 set "XIAOYUN_ASR_INPUT=USB Audio Device"
@@ -61,7 +61,7 @@ exit /b 0
 :fail
 echo.
 echo [FAIL] ASR did not become ready within 45 tries.
-echo Please send me the content of: D:\LunaAI\xiaoyun\logs\asr_err.log
+echo Please send me the content of: D:\LunaAI\project-nn\xiaoyun\logs\asr_err.log
 echo.
 pause
 exit /b 1
