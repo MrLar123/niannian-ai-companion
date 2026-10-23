@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>小芸 · 设置面板</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root{
+    --bg:#12141a; --card:#1a1d26; --card2:#20242f; --line:#2c313f;
+    --ink:#e8e6ef; --ink2:#9aa0b4; --ink3:#6b7186;
+    --pink:#e58fa8; --pink-dim:rgba(229,143,168,.14);
+    --ok:#7ecf9f; --warn:#e8c268; --err:#e57f7f; --accent:#8fa8e5;
+    --radius:14px;
+  }
+  *{ box-sizing:border-box; margin:0; padding:0; }
+  body{ background:var(--bg); color:var(--ink);
+    font:14px/1.65 "Segoe UI","Microsoft YaHei",system-ui,sans-serif;
+    padding:28px 20px 80px; }
+  .wrap{ max-width:860px; margin:0 auto; }
+  h1{ font-size:19px; font-weight:600; letter-spacing:.5px; }
+  .sub{ color:var(--ink3); font-size:12px; margin-top:2px; }
+  .head{ display:flex; align-items:flex-end; justify-content:space-between;
+    margin-bottom:22px; }
+  .refresh{ background:var(--card2); border:1px solid var(--line); color:var(--ink2);
+    border-radius:10px; padding:7px 14px; font-size:12px; cursor:pointer; }
+  .refresh:hover{ color:var(--ink); border-color:var(--pink); }
+  .grid{ display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+  @media (max-width:720px){ .grid{ grid-template-columns:1fr; } }
+  .card{ background:var(--card); border:1px solid var(--line); border-radius:var(--radius);
+    padding:18px 18px 16px; }
+  .card.wide{ grid-column:1 / -1; }
+  .card h2{ font-size:13px; font-weight:600; color:var(--pink);
+    letter-spacing:1px; margin-bottom:12px; }
+  .card h2 small{ color:var(--ink3); font-weight:400; letter-spacing:0; margin-left:8px; }
+  label{ display:block; font-size:12px; color:var(--ink2); margin:10px 0 4px; }
+  select,textarea{ width:100%; background:var(--card2); color:var(--ink);
+    border:1px solid var(--line); border-radius:10px; padding:8px 10px;
+    font-size:13px; font-family:inherit; outline:none; }
+  select:focus{ border-color:var(--pink); }
+  .desc{ font-size:11px; color:var(--ink3); margin-top:4px; min-height:15px; }
+  .desc.warn{ color:var(--warn); }
+  .desc.err{ color:var(--err); }
+  .note{ font-size:11px; line-height:1.55; border-radius:10px; padding:8px 10px;
+    margin-top:10px; display:none; }
+  .note.warn{ display:block; color:var(--warn); background:rgba(232,194,104,.09);
+    border:1px solid rgba(232,194,104,.32); }
+  .note.err{ display:block; color:var(--err); background:rgba(229,127,127,.08);
+    border:1px solid rgba(229,127,127,.32); }
+  .chain{ font-size:11px; color:var(--ink3); margin-top:8px; }
+  .chain b{ color:var(--ink2); font-weight:400; }
+  .chain s{ color:var(--ink3); opacity:.55; }
+  /* 用量看板 */
+  .ubars{ list-style:none; margin-top:14px; }
+  .ubars li{ display:grid; align-items:center; gap:12px; padding:7px 0;
+    grid-template-columns:minmax(110px,1.5fr) minmax(60px,2fr) 100px 62px;
+    border-bottom:1px dashed var(--line); font-size:12px; }
+  .ubars li:last-child{ border-bottom:0; }
+  .ubars .empty{ display:block; }
+  .uname{ color:var(--ink); min-width:0; overflow:hidden; text-overflow:ellipsis;
+    white-space:nowrap; }
+  .uname em{ display:block; color:var(--ink3); font-style:normal; font-size:10px;
+    overflow:hidden; text-overflow:ellipsis; }
+  .ubar{ height:8px; background:var(--card2); border-radius:4px; overflow:hidden; }
+  .ubar i{ display:block; height:100%; border-radius:4px;
+    background:linear-gradient(90deg,#8fa8e5,#e58fa8); }
+  .ubar.warn i{ background:linear-gradient(90deg,#e8c268,#e5a97f); }
+  .ubar.err i{ background:var(--err); }
+  .utok{ text-align:right; color:var(--ink); font-variant-numeric:tabular-nums; }
+  .utok small, .upct small{ display:block; color:var(--ink3); font-size:10px;
+    margin-top:1px; }
+  .upct{ text-align:right; color:var(--ink2); font-size:11px;
+    font-variant-numeric:tabular-nums; }
+  .upct.hot{ color:var(--warn); }
+  .upct.dead{ color:var(--err); }
+  .btn{ background:var(--pink-dim); border:1px solid var(--pink); color:var(--pink);
+    border-radius:10px; padding:7px 16px; font-size:12px; cursor:pointer; margin-top:12px; }
+  .btn:hover{ background:rgba(229,143,168,.25); }
+  .btn.danger{ color:var(--err); border-color:var(--err); background:rgba(229,127,127,.08); }
+  .btn.danger:hover{ background:rgba(229,127,127,.18); }
+  .btn:disabled{ opacity:.45; cursor:default; }
+  .row{ display:flex; gap:14px; flex-wrap:wrap; }
+  .kv{ background:var(--card2); border:1px solid var(--line); border-radius:10px;
+    padding:10px 12px; flex:1 1 130px; }
+  .kv b{ display:block; font-size:17px; font-weight:600; color:var(--ink); }
+  .kv span{ font-size:11px; color:var(--ink3); }
+  .bar{ height:6px; background:var(--card2); border-radius:3px; overflow:hidden;
+    margin-top:6px; }
+  .bar i{ display:block; height:100%; background:var(--pink); border-radius:3px; }
+  .legend{ display:flex; gap:14px; flex-wrap:wrap; font-size:11px; color:var(--ink2);
+    margin-top:10px; }
+  .legend i{ display:inline-block; width:8px; height:8px; border-radius:2px; margin-right:5px; }
+  .tl{ list-style:none; }
+  .tl li{ display:flex; gap:10px; padding:7px 0; border-bottom:1px dashed var(--line);
+    font-size:12px; }
+  .tl li:last-child{ border-bottom:0; }
+  .tl time{ color:var(--ink3); flex:0 0 42px; }
+  .tl .cat{ color:var(--accent); flex:0 0 64px; }
+  .tl .act{ color:var(--ink2); flex:1; }
+  .empty{ color:var(--ink3); font-size:12px; padding:8px 0; }
+  #toast{ position:fixed; left:50%; bottom:28px; transform:translate(-50%,16px);
+    background:#262a36; border:1px solid var(--line); color:var(--ink);
+    padding:9px 18px; border-radius:12px; font-size:13px; opacity:0;
+    transition:opacity .25s,transform .25s; pointer-events:none; z-index:9;
+    box-shadow:0 8px 26px rgba(0,0,0,.4); }
+  #toast.show{ opacity:1; transform:translate(-50%,0); }
+  #toast.err{ border-color:var(--err); color:var(--err); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="head">
+    <div>
+      <h1>小芸 · 设置面板</h1>
+      <div class="sub">所有修改热生效，不用重启后端</div>
+    </div>
+    <button class="refresh" onclick="loadAll()">↻ 刷新</button>
+  </div>
+
+  <div class="grid">
+    <!-- 陪伴 -->
+    <div class="card">
+      <h2>陪伴 <small>人格与声音</small></h2>
+      <label>人设（人格 + 声线一起换）</label>
+      <select id="presetSel"></select>
+      <div class="desc" id="presetDesc"></div>
+      <label>音色（只换声音，不动人格）</label>
+      <select id="voiceSel"></select>
+      <div class="desc" id="voiceDesc"></div>
+      <button class="btn" id="applyBtn" onclick="applyCompanion()">应用陪伴设置</button>
+    </div>
+
+    <!-- 模型 -->
+    <div class="card">
+      <h2>模型 <small>对话大脑</small></h2>
+      <label>对话模型</label>
+      <select id="modelSel"></select>
+      <div class="desc" id="modelDesc"></div>
+      <div class="row" style="margin-top:12px">
+        <div class="kv"><b id="mCur">-</b><span>当前选择</span></div>
+        <div class="kv"><b id="mBest">-</b><span>此刻最快</span></div>
+      </div>
+      <div class="chain" id="mChain"></div>
+      <div class="note" id="modelWarn"></div>
+      <button class="btn" id="modelBtn" onclick="applyModel()">切换模型</button>
+    </div>
+
+    <!-- 数据 -->
+    <div class="card">
+      <h2>数据 <small>记忆与感知</small></h2>
+      <div class="row">
+        <div class="kv"><b id="factCnt">-</b><span>长期记忆（条）</span></div>
+        <div class="kv"><b id="evCnt">-</b><span>活动事件（条）</span></div>
+        <div class="kv"><b id="perState">-</b><span>屏幕感知</span></div>
+      </div>
+      <div class="desc" id="visionDesc" style="margin-top:10px"></div>
+      <button class="btn danger" id="forgetBtn" onclick="forget()">清空长期记忆</button>
+      <span class="desc" style="margin-left:10px">活动事件不受影响</span>
+    </div>
+
+    <!-- 回顾 -->
+    <div class="card">
+      <h2>回顾 <small>她眼里的今天</small></h2>
+      <div class="row">
+        <div class="kv"><b id="rWork">-</b><span>工作占比</span></div>
+        <div class="kv"><b id="rSpan">-</b><span>有记录时长</span></div>
+        <div class="kv"><b id="rSig">-</b><span>报错/成功信号</span></div>
+      </div>
+      <div class="bar" id="workBar"><i style="width:0%"></i></div>
+      <div class="legend" id="catLegend"></div>
+    </div>
+
+    <!-- 用量 -->
+    <div class="card wide">
+      <h2>用量 <small>各模型 token 消耗 · 代理进程内记账</small></h2>
+      <div class="row">
+        <div class="kv"><b id="uTotal">-</b><span>合计 tokens</span></div>
+        <div class="kv"><b id="uCalls">-</b><span>调用次数</span></div>
+        <div class="kv"><b id="uModels">-</b><span>覆盖模型</span></div>
+        <div class="kv"><b id="uAvg">-</b><span>平均每次</span></div>
+      </div>
+      <div class="desc" id="uHint"></div>
+      <ul class="ubars" id="uList"></ul>
+    </div>
+
+    <!-- 今日时间线 -->
+    <div class="card wide">
+      <h2>今日活动时间线 <small>最近 15 条 · 每 60s 一条感知</small></h2>
+      <ul class="tl" id="timeline"></ul>
+    </div>
+  </div>
+</div>
+<div id="toast"></div>
+
+<script>
+/* ============ 工具 ============ */
+const $ = id => document.getElementById(id);
+let toastT = null;
+function toast(msg, isErr){
+  const t = $('toast');
+  t.textContent = msg; t.className = 'show' + (isErr ? ' err' : '');
+  clearTimeout(toastT);
+  toastT = setTimeout(() => t.className = '', 2600);
+}
+function get(url){ return fetch(url, {cache:'no-store'}).then(r => r.json()); }
+function post(url, body){
+  return fetch(url, {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(body || {})}).then(r => r.json());
+}
+function hhmm(ts){ const d = new Date(ts*1000);
+  return ('0'+d.getHours()).slice(-2) + ':' + ('0'+d.getMinutes()).slice(-2); }
+function fmtMin(s){ return s >= 3600 ? (s/3600).toFixed(1)+' 小时' : Math.round(s/60)+' 分钟'; }
+function fmtTok(n){
+  n = Number(n) || 0;
+  if (n >= 1e6) return (n/1e6).toFixed(2) + 'M';
+  if (n >= 1e3) return (n/1e3).toFixed(1) + 'k';
+  return String(n);
+}
+function fmtDur(s){
+  s = Number(s) || 0;
+  if (s < 60) return Math.round(s) + ' 秒';
+  if (s < 3600) return Math.round(s/60) + ' 分钟';
+  return (s/3600).toFixed(1) + ' 小时';
+}
+function esc(s){
+  return String(s == null ? '' : s).replace(/[&<>"]/g, c =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+}
+
+/* ============ 加载 ============ */
+async function loadCompanion(){
+  try{
+    const [p, v] = await Promise.all([get('/api/preset'), get('/api/voice-options')]);
+    if (p.ok){
+      $('presetSel').innerHTML = p.presets.map(x =>
+        '<option value="'+x.key+'"'+(x.key===p.current?' selected':'')+'>'+
+        x.label+'</option>').join('');
+      $('presetDesc').textContent =
+        (p.presets.find(x => x.key === p.current) || {}).desc || '';
+      $('presetSel').onchange = () => {
+        const o = p.presets.find(x => x.key === $('presetSel').value) || {};
+        $('presetDesc').textContent = o.desc || '';
+      };
+    }
+    if (v.ok){
+      $('voiceSel').innerHTML = v.options.map(x =>
+        '<option value="'+x.id+'"'+(x.id===v.current?' selected':'')+'>'+
+        x.label+'</option>').join('');
+      const cur = v.options.find(x => x.id === v.current) || {};
+      $('voiceDesc').textContent = (cur.note || cur.locale || '') +
+        '（引擎：' + (v.engine || '-') + '）';
+    }
+  }catch(e){ toast('陪伴设置加载失败', true); }
+}
+
+async function loadModel(){
+  try{
+    const j = await get('/api/chat-model');
+    if (!j.ok) return;
+    /* 清单由后端按 or_proxy 实况生成：上游被禁用的模型不会出现，
+       当前选择若已被弃用，会以 stale 标记插在列表里（必须让下拉框能选中它，
+       否则 select 会静默显示第一项，界面说的和真正在跑的不是一个东西）。 */
+    $('modelSel').innerHTML = j.options.map(x => {
+      const lat = x.latency ? ' · ' + x.latency.toFixed(2) + 's' : '';
+      return '<option value="'+x.id+'"'+(x.id===j.current?' selected':'')+'>'+
+        (x.stale ? '⚠ ' : '') + x.label + lat + '</option>';
+    }).join('');
+    const show = () => {
+      const o = j.options.find(x => x.id === $('modelSel').value) || {};
+      /* auto 的 upstream 是"混合"，再补一句（上游：混合）纯属噪音 */
+      const up = (o.upstream && o.upstream !== '混合') ? '（上游：' + o.upstream + '）' : '';
+      $('modelDesc').textContent = (o.note || '') + up;
+    };
+    show();
+    $('modelSel').onchange = show;
+    $('mCur').textContent = j.label || j.current;
+    /* "此刻最快"显示友好名，不要甩一长串 id（kv 卡片会被撑爆换行） */
+    const bestOpt = j.options.find(x => x.id === j.best_now) || {};
+    $('mBest').textContent = j.best_now
+      ? ((bestOpt.label || j.best_now) + (j.best_latency ? ' · ' + j.best_latency + 's' : ''))
+      : '-';
+    const ups = j.upstreams || [];
+    $('mChain').innerHTML = ups.length
+      ? '上游链路：' + (j.live ? '' : '（大脑未响应）') + ups.map(u =>
+          u.active ? '<b>' + u.label + '</b>' : '<s>' + u.label + '·禁用</s>').join(' → ')
+      : '';
+    const warns = j.warnings || [];
+    const box = $('modelWarn');
+    box.className = 'note ' + ((j.stale || !j.live) ? 'err' : 'warn');
+    box.textContent = warns.join('；');
+    if (!warns.length) box.style.display = 'none'; else box.style.display = 'block';
+  }catch(e){ toast('模型信息加载失败', true); }
+}
+
+async function loadData(){
+  try{
+    const [m, t, a, st] = await Promise.all([
+      get('/api/memory'), get('/api/context/today'),
+      get('/api/context/activity'), get('/api/context/state')]);
+    if (m.ok) $('factCnt').textContent = m.count;
+    if (t.ok && t.enabled){
+      $('evCnt').textContent = t.count;
+      const s = t.summary || {};
+      $('rWork').textContent = Math.round((s.working_ratio||0)*100) + '%';
+      $('rSpan').textContent = fmtMin(s.total_secs||0);
+      $('rSig').textContent = s.signals||0;
+      $('workBar').firstElementChild.style.width =
+        Math.round((s.working_ratio||0)*100) + '%';
+      const colors = ['#e58fa8','#8fa8e5','#7ecf9f','#e8c268','#c79fe5','#9fb8c9'];
+      const total = s.total_secs || 1;
+      $('catLegend').innerHTML = Object.entries(s.by_category||{}).map(([k,v],i) =>
+        '<span><i style="background:'+colors[i%colors.length]+'"></i>'+
+        k+' · '+fmtMin(v)+'（'+Math.round(v/total*100)+'%）</span>').join('');
+      $('timeline').innerHTML = (t.recent||[]).slice().reverse().map(e =>
+        '<li><time>'+hhmm(e.ts)+'</time><span class="cat">'+(e.category||'-')+
+        '</span><span class="act">'+(e.detail||e.activity||'')+'</span></li>').join('')
+        || '<li class="empty">还没有活动记录</li>';
+    } else {
+      $('evCnt').textContent = '-';
+    }
+    if (a.ok){
+      $('perState').textContent = a.enabled
+        ? (a.running ? '运行中' : '未运行') : '未启用';
+      $('visionDesc').textContent = a.enabled
+        ? ('视觉模型：' + (a.vision_model || '无（关键词降级）') +
+           ' · 视觉成功 ' + (a.stats||{}).vision_ok + ' 次 / 失败 ' +
+           (a.stats||{}).vision_fail + ' 次 · 周期 ' + a.interval + 's' +
+           (a.isWorking ? ' · 主人正在工作' : ''))
+        : '感知未启用（XIAOYUN_PERCEPTION=0 可关）';
+    }
+    if (st.ok) $('perState').textContent +=
+      st.working ? ' · 工作态' : '';
+  }catch(e){ toast('数据区加载失败', true); }
+}
+
+/* 用量看板：数据全部来自 /api/usage（后端再拼上 or_proxy /health 的 token_usage）。
+   两个口径必须写在页面上：进程内累计（重启归零）、百分比是"本进程记账/50万"，
+   不是控制台账单 —— 否则这张表会被当成结算依据。 */
+async function loadUsage(){
+  try{
+    const j = await get('/api/usage');
+    if (!j.ok) return;
+    const s = j.sum || {};
+    $('uTotal').textContent = fmtTok(s.total);
+    $('uCalls').textContent = (s.calls || 0).toLocaleString();
+    $('uModels').textContent = s.models || 0;
+    $('uAvg').textContent = fmtTok(Math.round(s.avg || 0));
+
+    let hint;
+    if (!j.live){
+      hint = '代理没在运行，读不到用量（or_proxy 8787）。';
+    } else if (!j.supported){
+      hint = '这版代理还没提供 token_usage —— 重启 or_proxy 让新代码生效后才会开始记账。';
+    } else {
+      hint = '代理已运行 ' + fmtDur(j.uptime_sec) + ' · 处理 ' + j.requests + ' 次请求'
+           + '（回退 ' + j.fallbacks + ' · 失败 ' + j.errors + '）'
+           + ' · 其中 prompt ' + fmtTok(s.prompt) + ' / completion ' + fmtTok(s.completion)
+           + ' · 百分比 = 本进程记账 / 方舟每模型 ' + fmtTok(j.quota_free) + ' 免费额度，'
+           + '重启归零，不等于控制台账单。';
+    }
+    $('uHint').textContent = hint;
+
+    $('uList').innerHTML = (j.rows || []).map(r => {
+      const pct = (r.quota_pct === null || r.quota_pct === undefined) ? null : r.quota_pct;
+      const tone = pct === null ? '' : (pct >= 100 ? 'err' : (pct >= 80 ? 'warn' : ''));
+      const tcls = pct === null ? '' : (pct >= 100 ? 'dead' : (pct >= 80 ? 'hot' : ''));
+      return '<li>' +
+        '<span class="uname">' + esc(r.label) +
+          '<em>' + esc(r.upstream) + ' · ' + esc(r.id) +
+          (r.cooling > 0 ? ' · 熔断 ' + Math.max(1, Math.round(r.cooling/60)) + ' 分' : '') +
+          '</em></span>' +
+        '<span class="ubar ' + tone + '"><i style="width:' +
+          Math.max(1, Math.min(100, r.bar || 0)) + '%"></i></span>' +
+        '<span class="utok">' + fmtTok(r.total) +
+          '<small>' + r.calls + ' 次 · ' + fmtTok(Math.round(r.avg || 0)) + '/次</small></span>' +
+        '<span class="upct ' + tcls + '">' +
+          (pct === null ? '—'
+            : (pct >= 1 ? pct.toFixed(1) : pct.toFixed(2)) + '%') +
+          '<small>' + (r.quota ? '占额度' : '非方舟档') + '</small></span>' +
+      '</li>';
+    }).join('') || '<li class="empty">还没有用量记录</li>';
+  }catch(e){ toast('用量加载失败', true); }
+}
+
+function loadAll(){ loadCompanion(); loadModel(); loadData(); loadUsage(); }
+loadAll();
+setInterval(() => { loadData(); loadUsage(); }, 30000);   // 回顾/数据/用量静默自刷
+
+/* ============ 操作 ============ */
+async function applyCompanion(){
+  const btn = $('applyBtn'); btn.disabled = true;
+  try{
+    const pk = $('presetSel').value, vk = $('voiceSel').value;
+    const [r1, r2] = await Promise.all([
+      post('/api/preset', {key: pk}), post('/api/voice-options', {voice: vk})]);
+    if (r1.ok && r2.ok) toast('陪伴设置已生效：' + (r1.label || pk) + ' · ' + (r2.label || vk));
+    else toast('部分失败：' + ((r1.error||'') + ' ' + (r2.error||'')).trim(), true);
+  }catch(e){ toast('请求失败：' + e, true); }
+  btn.disabled = false;
+}
+
+async function applyModel(){
+  const btn = $('modelBtn'); btn.disabled = true;
+  try{
+    const r = await post('/api/chat-model', {model: $('modelSel').value});
+    if (r.ok){
+      toast('已切换：' + (r.label || r.current) +
+        (r.verified ? ('（实测 ' + r.latency + 's）') : '（探活未通过，可能没起）'),
+        !r.verified);
+      loadModel();
+    } else toast(r.error || '切换失败', true);
+  }catch(e){ toast('请求失败：' + e, true); }
+  btn.disabled = false;
+}
+
+async function forget(){
+  if (!confirm('确定让念念忘掉所有长期记忆吗？\n（事实库与聊天摘要会清空；活动事件不受影响）')) return;
+  try{
+    const r = await post('/api/memory/clear', {});
+    toast(r.ok ? '已清空长期记忆' : (r.error || '清空失败'), !r.ok);
+    loadData();
+  }catch(e){ toast('请求失败：' + e, true); }
+}
+</script>
+</body>
+</html>

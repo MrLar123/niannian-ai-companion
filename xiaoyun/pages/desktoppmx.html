@@ -1,0 +1,3051 @@
+<!DOCTYPE html>
+<html style="margin:0;padding:0;">
+<head>
+<meta charset="UTF-8">
+<title>念念 PMX</title>
+<style>
+  :root{ --pink:#EAA7B2; --ink:#2a2230; }
+  *{ box-sizing:border-box; }
+  /* 页面必须保持真透明：桌面壳把 WinForms 窗体底色刷成色键色（见 desktop_app.py 的 KEY_COLOR）。
+     渲染器 alpha:true + 清屏透明度 0，这里再透一层就干净了。 */
+  html,body{
+    margin:0; padding:0; width:100%; height:100%; overflow:hidden;
+    background:transparent;
+    font-family:"PingFang SC","Microsoft YaHei",Segoe UI,Arial,sans-serif;
+    user-select:none; -webkit-user-select:none; cursor:default;
+  }
+  #stage{ position:absolute; inset:0; }
+  #stage canvas{ display:block; width:100% !important; height:100% !important; }
+
+  #bubble{ position:absolute; left:50%; top:14px; transform:translate(-50%,8px);
+    max-width:88%; z-index:20; opacity:0; transition:opacity .25s,transform .25s;
+    background:rgba(255,255,255,.95); border:1px solid rgba(217,120,145,.45);
+    border-radius:16px; padding:11px 15px; font-size:14px; line-height:1.6; color:var(--ink);
+    box-shadow:0 6px 22px rgba(217,120,145,.28); pointer-events:none; }
+  #bubble.show{ opacity:1; transform:translate(-50%,0); }
+  #bubble:after{ content:""; position:absolute; left:50%; bottom:-9px; margin-left:-8px;
+    border:9px solid transparent; border-top-color:rgba(255,255,255,.95); border-bottom:0; }
+
+  #tip{ position:absolute; left:0; right:0; bottom:4px; text-align:center; z-index:15;
+    font-size:11px; color:#8a7d8c; opacity:0; transition:opacity .6s; pointer-events:none;
+    text-shadow:0 1px 3px rgba(255,255,255,.95); }
+
+  /* ---- 思考中指示（P3 DSH：大脑真状态，/api/brain/state 轮询驱动） ---- */
+  #think{ position:absolute; left:50%; top:14px; transform:translate(-50%,8px);
+    z-index:21; opacity:0; transition:opacity .25s,transform .25s;
+    background:rgba(255,255,255,.92); border:1px solid rgba(150,120,180,.38);
+    border-radius:14px; padding:6px 12px; font-size:12px; color:#6b5f7a;
+    box-shadow:0 4px 14px rgba(120,100,170,.18); pointer-events:none; }
+  #think.show{ opacity:1; transform:translate(-50%,0); }
+  #think .dot{ display:inline-block; width:5px; height:5px; margin:0 2px;
+    border-radius:50%; background:#9c8fc0; animation:thinkpulse 1.1s infinite; }
+  #think .dot:nth-child(2){ animation-delay:.18s }
+  #think .dot:nth-child(3){ animation-delay:.36s }
+  @keyframes thinkpulse{ 0%,60%,100%{opacity:.25; transform:translateY(0)}
+    30%{opacity:1; transform:translateY(-3px)} }
+
+  /* ---- 语音对话控件 ---- */
+  /* ★ 必须是 flex-end（右对齐），绝不能用 center：
+     #voice 是"收缩宽度"的绝对定位容器，宽度 = 最宽的那个子元素。若子元素居中对齐，
+     一旦状态文字 #vstat（max-width:150px）由空变长，容器就变宽，麦克风按钮会被一起
+     推着横向平移（实测状态文字变长后按钮右移约 40 CSS px，125% 缩放下 ≈49 物理 px）。
+     而桌面壳盖在上面的隐形点击层用的是页面上报的坐标 —— 位置一漂，用户明明正中按钮
+     却落到"身体区"，于是弹出聊天窗。这正是"点麦克风却弹出聊天界面"的根因。
+     右对齐后每个子元素的右边缘都锚在同一条固定右边线上，彼此宽度互不影响。 */
+  #voice{ position:absolute; right:19%; bottom:12px; z-index:30;
+    /* right 从 12px 收到 19%：819 宽的窗口里原来话筒悬在右下角，
+       离人物（居中、约占宽 40%）横向 180px+，用户反馈"话筒离人物太远"。
+       19% ≈ 收到人物右腿外侧，贴近但不遮挡。坐标由页面上报给桌面壳的
+       隐形点击层，壳侧无需同步改。 */
+    display:flex; flex-direction:column; align-items:flex-end; gap:6px; }
+  #micWrap{ position:relative; width:38px; height:38px; }
+  #mic{ width:38px; height:38px; border-radius:50%; cursor:pointer;
+    border:1px solid rgba(217,120,145,.55); background:rgba(255,255,255,.92);
+    box-shadow:0 3px 12px rgba(217,120,145,.3); display:flex; align-items:center;
+    justify-content:center; font-size:17px; color:#c25c78; padding:0;
+    transition:transform .15s, background .2s; pointer-events:auto; }
+  #mic:hover{ transform:scale(1.08); }
+  #mic:active{ transform:scale(0.94); }
+  /* 正在收音：变红 + 脉冲，一眼就知道她在听 */
+  #mic.on{ background:#e05a76; color:#fff; border-color:#e05a76;
+    animation:pulse 1.1s ease-in-out infinite; }
+  #mic.busy{ background:#f3d9a0; border-color:#e0b45f; color:#8a6a1f;
+    animation:busypulse 1.8s ease-in-out infinite; }
+  @keyframes busypulse{
+    0%,100%{ box-shadow:0 0 0 0 rgba(224,180,95,.55); }
+    50%{ box-shadow:0 0 0 7px rgba(224,180,95,0); }
+  }
+  @keyframes pulse{
+    0%,100%{ box-shadow:0 0 0 0 rgba(224,90,118,.55), 0 3px 12px rgba(217,120,145,.3); }
+    50%{ box-shadow:0 0 0 9px rgba(224,90,118,0), 0 3px 12px rgba(217,120,145,.3); }
+  }
+  /* 收音光圈：必须是麦克风的子元素，跟着按钮一起动，才不会错位 */
+  #micRing{ position:absolute; left:50%; top:50%; width:38px; height:38px;
+    margin-left:-19px; margin-top:-19px; border-radius:50%;
+    border:2px solid rgba(224,90,118,.95); opacity:0; transform:scale(1);
+    pointer-events:none; }
+  #micRing.live{ opacity:1; }
+  #vmode{ font-size:10px; color:#8a7d8c; background:rgba(255,255,255,.85);
+    border:1px solid rgba(217,120,145,.35); border-radius:9px; padding:2px 7px;
+    cursor:pointer; pointer-events:auto; user-select:none; white-space:nowrap; }
+  #vstat{ font-size:11px; color:#a08a97; max-width:150px; text-align:center;
+    line-height:1.35; pointer-events:none; min-height:14px; }
+  /* 等模型响应：琥珀色；等太久（>8s）转成更醒目的慢闪，让"她在想"和"卡住了"可分 */
+  #vstat.wait{ color:#b0762f; font-weight:600; }
+  #vstat.slow{ color:#c25c1f; font-weight:600; animation:slowblink 1.6s ease-in-out infinite; }
+  @keyframes slowblink{ 0%,100%{opacity:.55;} 50%{opacity:1;} }
+  #vstat.on{ color:#d24a66; font-weight:600; }      /* 正在听：醒目 */
+  #vstat.err{ color:#c0392b; font-weight:600; }     /* 出错：红色 */
+  /* 预览/调参窗（?model= / ?tune）：没有语音服务，别显示麦克风和它的报错 */
+  body.preview #voice{ display:none; }
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "three": "/assets/lib/three.module.js",
+    "three/addons/": "/assets/lib/addons/",
+    "fflate": "/assets/lib/addons/libs/fflate.module.js"
+  }
+}
+</script>
+</head>
+<body>
+
+  <div id="stage"></div>
+  <div id="bubble"></div>
+  <div id="think"></div>
+  <div id="tip">拖动我换位置 · 点我打开聊天</div>
+
+  <!-- 语音对话：麦克风按钮 + 模式切换 + 状态 -->
+  <div id="voice">
+    <div id="vstat"></div>
+    <div id="vmode" title="点击切换语音对话方式">🎙 连续对话</div>
+    <div id="micWrap">
+      <div id="micRing"></div>
+      <div id="mic" title="点击开始/结束说话">🎤</div>
+    </div>
+  </div>
+
+<script src="/assets/lipsync/lipsync.js"></script>
+<script type="module">
+import * as THREE from 'three';
+import { MMDLoader } from 'three/addons/loaders/MMDLoader.js';
+import { MMDAnimationHelper } from 'three/addons/animation/MMDAnimationHelper.js';
+window.__xyTHREE = THREE;   // 调试：控制台可直接 new THREE.DataTexture 等
+
+/* 口型字典预加载（225KB 静态 JSON，本地回环，一次性） */
+if (window.XiaoyunLipSync) {
+  window.XiaoyunLipSync.init({ dictUrl: '/assets/lipsync/zh-visemes.json' })
+    .then(function(){ console.log('[lipsync] 字典就绪'); });
+}
+
+/* ===================== 前端触发事件日志 =====================
+   把每一次"触发"都记下来：写到后端 前端事件日志.txt（[页] 前缀），
+   同时压进 window.xiaoyunEvents 并打印到控制台。
+   排查"点了没反应"先看这里：若日志里根本没有这一条，说明这次点击
+   压根没到页面 —— 透明桌面模式下 WebView2 收不到鼠标事件（微软已知限制），
+   那一层的点击必须由桌面壳的隐形点击层代劳，页面日志不会出现。 */
+window.xiaoyunEvents = window.xiaoyunEvents || [];
+function xlog(type, detail){
+  try{
+    window.xiaoyunEvents.push({ t: Date.now(), type: type, detail: detail || '' });
+    if (window.xiaoyunEvents.length > 400) window.xiaoyunEvents.shift();
+    try{ console.log('[念念]', type, detail || ''); }catch(e){}
+    fetch('/api/event', { method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ src:'页', type: type, detail: String(detail || '') })
+    }).catch(function(){});
+  }catch(e){}
+}
+window.xiaoyunLog = xlog;
+
+/* 桌面壳在时，透明模式的点击由壳的隐形点击层代劳；
+   为避免"页面 + 壳"同一次点击各触发一次（开完立刻关 = 点了没反应），
+   页面在有壳时不再自行发起语音请求，只记录日志。
+
+   ★ 判定依据以后端为准（shell_online：壳每 0.5s 发心跳）。
+     不要用 "window.pywebview.api.xxx 存在" 来猜：桥的注入时序很不稳，实测在加载
+     瞬间经常取不到，于是页面误以为"没有壳"而自己去发请求 —— 一旦壳也在，就变成
+     同一次点击触发两遍。后端心跳是可靠的（和日志同一条通道）。 */
+let shellOnline = false;      // 由 /api/voice/state 轮询写入
+function hasShell(){
+  if (shellOnline) return true;
+  try{ return !!(window.pywebview && window.pywebview.api); }
+  catch(e){ return false; }
+}
+
+/* ===================== 观感参数（后端 /api/models 可按模型覆盖） =====================
+   ★ 形象切换：不再写死模型。启动时从 GET /api/models 取"当前选中的人物模型"，
+     之后轮询该接口 —— 桌面壳右键菜单/托盘切换模型后，这里 2 秒内自动重载新形象。
+     下面这些初始值只是"后端没起时的兜底"（佩儿）。 */
+let MODEL_URL = '/assets/peier/椛暗式-姵儿ver1.2.pmx';
+let RES_PATH  = '/assets/peier/';         // 纹理所在目录（随模型目录变化）
+let CUR_MODEL_KEY = 'peier';
+let YAW       = 0;                       // PMX 经 MMDLoader 加载后面向 +Z；若她背对你就改 Math.PI
+let MARGIN    = 1.22;                    // 留白：1.0 = 头顶脚底刚好顶满窗口高度
+let idleDist  = 0;                       // 最近一次待机取景的机位距离（frameMotion 用它钳制动作机位）
+                                          // ⚠ 太小会因头部超出画面导致自动取景量不准（恶性循环），1.2~1.3 安全
+let NUDGE_X   = 0.0;
+let NUDGE_Y   = 0.0;
+/* ARM_DROP / ARM_FWD / ELBOW_BEND（手臂姿势参数）在下面"手臂姿势"一节统一声明 */
+
+/* 待机动作幅度（想更活泼调大，想更安静调小；单位都是弧度）
+   ⚠ 手臂动作已按用户要求去掉，ARM_AMP / FINGER_AMP 一并废弃。 */
+const BREATH_SCALE = 0.0035;  // 整体呼吸缩放：几乎看不出来，只留一点"活着"的感觉
+const SKIRT_AMP    = 0.085;   // 裙摆摆幅（链条末端累计约 12°）
+const HAIR_AMP     = 0.050;   // 后发摆幅
+const BANG_AMP     = 0.040;   // 刘海摆幅
+
+/* ---- 手臂姿势（方案 A：自然垂放）----
+   旧版 ARM_DROP=1.15（66°）把 A-pose 手臂死压向身后，双手正好落在臀部后面，
+   就是"手背在背后罚站"的僵硬感。市面桌宠（SAMA 等）的共识是只压 ~30°、
+   肘微弯、手落在大腿前侧偏外，看起来才是"自然站着"。 */
+let ARM_DROP   = 0.55;   // A-pose 下压角（弧度，~31°）；后端 params.arm_drop 可覆盖
+let ARM_FWD    = 0.10;   // 整臂略向前摆（local +x = 向前），手落到大腿前侧
+let ELBOW_BEND = 0.18;   // 肘微弯向前（local +x = 向前；旧版 -0.10 是向后弯，手会缩到身后）
+
+/* ---- 随机小动作（方案 D）----
+   每 GESTURE_EVERY_MIN~MAX 秒随机触发一个，播放完回到自然垂放：
+   tilt  歪头（左右随机，带一点脖子的跟随）
+   nod   轻点头两三下（像在应和你）
+   wave  挥手打招呼（标准 HI：手举到头侧、掌心朝前、左右摆几下）
+   GESTURE_AMP 是总幅度旋钮：嫌动作大就调 0.7，想更明显调 1.3。
+   ★ 调试：页面 URL 带 ?g=wave / ?g=tilt / ?g=nod 可强制循环播放该动作
+     （间隔缩短到 ~2 秒），用于肉眼验证姿势对不对。 */
+const GESTURE_EVERY_MIN = 8, GESTURE_EVERY_MAX = 15;
+const GESTURE_AMP = 1.0;
+/* 各动作幅度（弧度）。挥手要"整臂抬过肩 + 折肘到头侧"才到位：
+   手臂只抬到水平会变成奇怪的平举 —— 就是之前遇到的问题。 */
+const TILT_AMP      = 0.26;   // 歪头角度
+const NOD_AMP       = 0.22;   // 点头角度
+/* ---- 标准 HI 招手 ---- */
+let WAVE_ARM_LIFT = 0.95;     // 上臂从基础姿势再上抬（肘落在肩下方，自然外张）
+let WAVE_ELBOW    = 2.20;     // 前臂朝头侧折回（手落在耳朵斜上方）
+let WAVE_ELBOW_FWD= 0.15;     // 前臂略向前偏，手别贴着头
+let WAVE_WRIST    = -1.40;    // 翻掌：让掌心朝正前方（招手的关键）。
+                              // ⚠ 符号别乱改：这里是 -90° 而不是 +90°。
+                              //   用「食指根-手腕-小指根」构成的掌面叉乘算法线时，+90° 得到的是
+                              //   手背朝前、掌心对着自己的脑袋（就是之前那个"对着头"的毛病）；
+                              //   标定依据：自然垂放时掌心贴大腿，此刻该法线指朝身体外侧 = 手背。
+                              //   -1.40 是实测掌面最正对观众（掌心·正前方 ≈ 0.85）的角度。
+let WAVE_SWING    = 0.42;     // 摆动幅度（绕前臂长轴左右翻手掌，±24°）
+let WAVE_BOB      = 0.07;     // 摆臂时整条手臂跟着轻微起伏（不然只有手腕在转，像拍手）
+const WAVE_SWINGS = 3;        // 一次动作里摆几下
+
+/* ---- 眼神追随（全局光标 -> 眼球朝向）----
+   数据链：桌面壳 CursorPoller 20Hz 采 GetCursorPos + 窗口矩形 → POST /api/gaze/cursor
+           → 这里 150ms GET /api/gaze → 算目标角度 → 指数平滑 → 驱动 左目/右目 骨骼。
+   模型资产实读确认（tools/pmxbones.mjs，佩儿 263 骨）：
+     94|右目(parent=頭) 95|右目先  96|左目(parent=頭) 97|左目先
+   所以能直接做真正的眼球追踪，不需要拿头部/morph 降级。 */
+const GAZE_POLL_MS  = 150;    // 取后端光标的间隔
+const GAZE_MAX_AGE  = 1.0;    // 光标数据超过 1s 不上报（壳挂/窗口没了）→ 眼神回中位
+/* ★ 幅度上限（2026-10-19 两次实测回调）：
+   0.61rad(35°) 会让瞳孔直接滑出眼眶消失 —— 那是"眼+头"联合才能到的角度，纯眼骨 25° 就露眼白。
+   纯眼球定在 15°/11.5°，垂直比水平略小（上下眼裂更窄）；幅度不够的部分交给头部（见 GAZE_HEAD_*）。 */
+const GAZE_YAW_MAX  = 0.26;   // 眼球水平极限（弧度 ±15°）
+const GAZE_PITCH_MAX= 0.20;   // 眼球垂直极限（弧度 ±11.5°）
+/* 死区按**像素**算（窗口只有 560px 宽，按半宽比例算的话鼠标稍动就爆表）：
+   46px ≈ 角色中心一小圈不追（呆盯中心很违和）；260px 是"有效半径"，
+   光标偏离 260px 时约到 63% 幅度，屏幕边角才接近极限。
+   ★ 420px 太钝（实测：鼠标动一截眼珠几乎不动），改 260px + 指数曲线更跟手。 */
+const GAZE_DEAD_PX  = 46;
+const GAZE_REF_PX   = 260;
+const GAZE_TAU      = 0.10;   // 指数平滑时间常数（秒）：眼动要快但不能瞬移，瞬移像抽搐
+/* 头部跟随拆成左右/上下两组（★ 2026-10-19 用户实测回调）：
+   窗口里眼珠上下只有十几像素，纯眼球动根本看不出来，上下必须靠"点头"补；
+   左右靠"首+頭"两节骨分担，幅度大也不扭脖子。
+   换算：yaw 0.26×1.60 ≈ 24°、pitch 0.20×2.00 ≈ 23°（光标到屏幕边角时的总偏转）。 */
+const GAZE_HEAD_YAW   = 1.60;   // 头部左右总跟随（首骨 45% / 頭骨 55%）
+const GAZE_HEAD_PITCH = 2.00;   // 头部上下总跟随（首骨 25% / 頭骨 75%）
+/* 左右目骨的 Y 轴是否互为反向。MMD 模型的目骨局部轴在导出时通常已做镜像处理
+   （同号=双眼同向），但不同导出处不一样 —— 这里给开关，无头截图实测后定档。 */
+const EYE_YAW_MIRROR = false;
+
+/* ---- 点击反馈（戳一下）----
+   数据链：壳判定"点在她身上" → POST /api/poke（带窗内归一化坐标）
+           → 这里 150ms 轮询 /api/gaze 时读到 poke.seq 变化 → 播一次反应。
+
+   ★ 为什么不用整体位移（2026-10-19 返工）：最初版本是 rig.position.z/y 平移
+     （"往后退半步 + 下蹲"）。用户实测反馈"点一个部位整个身体动，比较僵硬"。
+     根因不是幅度大，是**作用层级错了**：
+       a) 刚体平移会连脚一起搬走，像整块积木被推了一下，而真人被戳是局部凹陷；
+       b) 躯干/颈/头共用同一条 exp 曲线，同时起同时停，没有追随感（提线木偶）。
+     改成业界通行的做法（Live2D 分区动作 / 桌宠 Q 弹 / Disney 三原则）：
+       a) 脚底锚定：只动 rig.scale（挤压），不碰 rig.position；
+       b) 三级延迟：躯干立即 → 颈 +40ms → 头 +80ms 且衰减更慢；
+       c) 入场用 easeOutBack 过冲一下再回落，而不是纯指数。
+   连戳（POKE_CHAIN_MS 内第二下）改播"嫌弃"，语义是"你烦不烦"。
+   模型没有对应 morph 时自动退化成"只有身体反应"，不报错。 */
+const POKE_CHAIN_MS = 800;    // 连击窗口：这段时间内再被戳 -> 嫌弃
+const POKE_MIN_GAP  = 0.10;   // 两次反应的最小间隔。150ms 轮询粒度下基本触发不到，
+                              // 留着防"壳连发/以后提高轮询频率"时动画被打成一团
+const POKE_SMILE    = 0.25;   // 受惊瞬间把笑肌压到这个上限（不能让"吓一跳"还带着笑）
+const POKE_D_NECK   = 0.040;  // 颈部相对躯干的延迟（秒）—— 头慢半拍才像"被牵动"
+const POKE_D_HEAD   = 0.080;  // 头部再晚一点；配合更慢的 tau，形成 follow-through
+const POKE_HEAD_TAU = 1.35;   // 头部衰减时间常数 = 躯干 tau × 这个系数（收得更慢）
+const POKE_NECK_TAU = 1.12;   // 颈部介于两者之间
+const POKE_FACE_TAU = 1.9;    // 表情收得最慢（1.9×躯干）：一眼就看得到脸变了，才叫"有反应"
+
+/* 两档手感（右键菜单「点击手感」切换，值来自后端 data/poke_style.txt）。
+   soft  = 克制：压扁 3%、头后仰约 5°，像被打扰到 —— 符合 27 岁高冷设定（默认）
+   vivid = 明显：压扁 5.5%、过冲更大，Q 弹感强
+   全部是弧度 / 比例，不含魔法数字：sy 是竖直压扁比例，sx 是横向膨胀比例
+   （静态体积近似守恒，sx ≈ sy × 0.6 看着最自然）。 */
+const POKE_STYLES = {
+  /* 身体值刻意压小：躯干压扁 3% 时整个人都在矮一截，看起来"整块在动"（用户实测反馈）。
+     现在只留 1.7%（约 1cm），存在感来自"顿一下"而不是"缩一圈"。 */
+  soft:  { sy: 0.017, sx: 0.010, headX: 0.165, headZ: 0.075,
+           neckX: 0.070, spineX: 0.010, rise: 0.075, tau: 0.105, over: 0.06, dur: 0.55 },
+  vivid: { sy: 0.030, sx: 0.018, headX: 0.265, headZ: 0.115,
+           neckX: 0.110, spineX: 0.018, rise: 0.070, tau: 0.130, over: 0.12, dur: 0.66 },
+};
+/* 部位的差异化系数：点脸是"躲"（头动得多、身体几乎不动），点身体是"缩"。
+   squash = 躯干挤压倍率；head = 头后仰倍率；headZ = 歪头躲闪；spine = 含胸前倾。 */
+const POKE_PART = {
+  head: { squash: 0.35, head: 1.00, neck: 0.90, headZ: 1.00, spine: 0.00 },
+  body: { squash: 1.00, head: 0.35, neck: 0.30, headZ: 0.35, spine: 1.00 },
+};
+/* 表情组合表（[表情名, 权重]）。
+   ★ 为什么不用单个 びっくり：MMD 的表情是"分层"的，びっくり 只驱动嘴和眉的一小块。
+     实测佩儿：びっくり 422 顶点 / 平均位移 0.020，而 まばたき 是 0.167 —— 差 8 倍，
+     单独拉满肉眼几乎看不出来（用户实测"没有表情变化"就是这个原因）。
+     所以按"惊吓的构成要素"组合：瞳孔缩小（最直观的受惊信号）+ 张嘴 + 眼珠微上。
+     嫌弃：半眯眼（じと目 位移 0.288，本身就够）+ 眼珠下垂，叠加成"懒得理你"。
+     名字取不到的表情自动跳过，不会报错。 */
+const POKE_FACE_SPEC = {
+  surprise: [['瞳小', 1.00], ['ワ', 0.80], ['上', 0.30]],
+  annoyed:  [['じと目', 1.00], ['下', 0.45]],
+};
+
+/* 活动反应表情（屏幕感知的表情出口）：error = 担心/一惊（比受惊轻），
+   success = 成事了的高兴。强度整体低于 POKE_FACE_SPEC——这是"注意到"不是"吓到"。 */
+const ACTIVITY_FACE_SPEC = {
+  error:   [['瞳小', 0.85], ['ワ', 0.50], ['上', 0.22]],
+  success: [['にこり', 1.00], ['笑い', 0.70]],
+};
+
+/* 表情参数 */
+const SMILE_BASE  = 0.55;   // 微笑常驻强度（0~1；可爱风微笑，不夸张）→ 想更甜就调大
+const BLINK_EVERY = 3.6;    // 每多少秒眨一次眼
+
+/* ===================== 观感增强：对比度 =====================
+   画面"发灰、不够立体"有三个可量化来源（实测确认）：
+   1) MMDLoader 给材质贴的 toon 渐变贴图是**纯白**（全 255），等于没有色阶 ——
+      光照线性过渡，缺少赛璐璐那种明确的明暗分界。
+   2) PMX 的 ambient 被映射成 material.emissive，佩儿多个材质是 0x474747
+      （≈28% 亮度），等于给整张图垫了一层灰底，暗部永远压不黑。
+   3) 环境光（Hemisphere 0.45）占比偏高，进一步削弱主光的塑造。
+   对策：4 阶硬色阶 toon + emissive 按比例压低 + 提高主光/降低环境光。
+   想更强/更柔：调 TOON_STEPS 的间距（越靠两端、中间越陡 = 越硬）。 */
+const TOON_STEPS   = [0.64, 0.79, 0.90, 1.0];   // 4 阶色带：暗 → 亮（太高会整体偏灰，太低会压暗）
+const EMISSIVE_K   = 1.0;                       // ambient(emissive) 保留比例：1=不动。
+                                                // 想让黑更黑可降到 0.85，但会整体压暗，需同时加大 gamma
+const CONTRAST_K   = 1.20;                      // 亮度对比度（绕 0.5 中点拉伸，实测 1.20 最平衡）
+const SATURATE_K   = 1.18;                      // 饱和度
+const GAMMA_K      = 0.85;                      // S 曲线的提亮补偿（<1 提亮）。越接近 1 越暗、高光越不容易削顶
+const TOON_SKIP    = /eye|眼|瞳|白目|hilite|highlight/i;  // 眼睛类材质不吃色阶
+let toonGradient  = null;
+
+/* 调试开关：URL 加 ?grade=0 完全关掉调色（用于 A/B 对照），
+   ?c=1.2&s=1.2 可临时覆盖对比度/饱和度。
+   还能在控制台实时调：__xyGrade.on(false) / __xyGrade.c(1.2) / __xyGrade.s(1.2)。 */
+const _q = new URLSearchParams(location.search);
+let GRADE_ON = _q.get('grade') !== '0';
+let GRADE_C  = parseFloat(_q.get('c')) || CONTRAST_K;
+let GRADE_S  = parseFloat(_q.get('s')) || SATURATE_K;
+let GRADE_G  = parseFloat(_q.get('g')) || GAMMA_K;
+let GRADE_B  = parseFloat(_q.get('b')) || 1.0;   // 亮度倍率（1 = 不动）
+let LOCK_MODEL = false;                          // true = 单模型预览窗，不跟随后端切换
+/* 预览/调参窗不显示语音控件（那边没有 ASR 服务，留着只会报"语音服务没启动"） */
+if (_q.has('tune') || _q.get('model')) document.body.classList.add('preview');
+
+/* 真正"提对比度"的一步：在材质片元着色器末尾加一条 S 形曲线 + 饱和度。
+   为什么不靠调灯光：模型主色是白衣服 + 浅发，全挤在亮部，
+   单纯加减亮度只会整体变明/变暗，标准差几乎不动（实测 54.0 → 53.6）。
+   绕 0.5 做线性拉伸，才能把亮部推亮、暗部压暗，肉眼层次立得起来。
+   参数走 uniform，运行时改值不用重编译着色器。 */
+function applyGradeShader(m) {
+  m.onBeforeCompile = (shader) => {
+    shader.uniforms.uGradeC = { value: GRADE_C };
+    shader.uniforms.uGradeS = { value: GRADE_S };
+    shader.uniforms.uGradeG = { value: GRADE_G };
+    shader.uniforms.uGradeB = { value: GRADE_B };
+    shader.fragmentShader =
+      'uniform float uGradeC;\nuniform float uGradeS;\nuniform float uGradeG;\nuniform float uGradeB;\n' +
+      shader.fragmentShader.replace(
+        '#include <dithering_fragment>',
+        `#include <dithering_fragment>
+       {
+         vec3 c = gl_FragColor.rgb;
+         c = clamp((c - 0.5) * uGradeC + 0.5, 0.0, 1.0);
+         float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
+         c = clamp(mix(vec3(l), c, uGradeS), 0.0, 1.0);
+         /* 提亮补偿：S 曲线会把整体压暗，用 gamma 拉回来，
+            这样"层次变多"而不是"画面变暗"。uGradeG 可被 per-model
+            params.gamma 覆盖：全白模型用更接近 1 的 gamma，避免高光削顶 */
+         c = pow(c, vec3(uGradeG));
+         /* 亮度倍率：整体明暗（1 = 不动）。放在 gamma 之后，
+            这样提亮时不会顺手把高光压成一片死白块 */
+         c = clamp(c * uGradeB, 0.0, 1.0);
+         gl_FragColor.rgb = c;
+       }`
+      );
+    m.userData.shader = shader;
+  };
+  m.customProgramCacheKey = () => 'xygrade';
+}
+
+function makeToonGradient() {
+  const n = TOON_STEPS.length;
+  const data = new Uint8Array(n * 4);
+  TOON_STEPS.forEach((v, i) => {
+    const b = Math.round(Math.max(0, Math.min(1, v)) * 255);
+    data[i * 4] = data[i * 4 + 1] = data[i * 4 + 2] = b;
+    data[i * 4 + 3] = 255;
+  });
+  const tex = new THREE.DataTexture(data, n, 1, THREE.RGBAFormat);
+  tex.minFilter = tex.magFilter = THREE.NearestFilter;   // 硬边，不要插值
+  tex.generateMipmaps = false;
+  tex.needsUpdate = true;
+  return tex;
+}
+
+const GRADE_MATS = [];        // 已接管的材质（便于运行时开关）
+
+/* 把"当前设定"应用到材质：on=false 时全部还原成模型原样 */
+function applyGrade(on) {
+  const grad = on ? (toonGradient || (toonGradient = makeToonGradient())) : null;
+  for (const m of GRADE_MATS) {
+    if (m.userData.__em0 && m.emissive) {
+      m.emissive.copy(m.userData.__em0);
+      if (on) m.emissive.multiplyScalar(EMISSIVE_K);
+    }
+    if (m.isMMDToonMaterial && !TOON_SKIP.test(m.name || '')) {
+      m.gradientMap = on ? grad : m.userData.__grad0;
+    }
+    if (m.userData.shader) {
+      m.userData.shader.uniforms.uGradeC.value = on ? GRADE_C : 1.0;
+      m.userData.shader.uniforms.uGradeS.value = on ? GRADE_S : 1.0;
+      m.userData.shader.uniforms.uGradeG.value = on ? GRADE_G : 1.0;
+      m.userData.shader.uniforms.uGradeB.value = on ? GRADE_B : 1.0;
+    }
+    m.needsUpdate = true;
+  }
+}
+
+function enhanceMaterials(mesh) {
+  const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+  let n = 0;
+  for (const m of mats) {
+    if (!m || m.userData.__xyGrade) continue;   // 同一材质只接管一次
+    m.userData.__xyGrade = 1;
+    m.userData.__em0  = m.emissive ? m.emissive.clone() : null;
+    m.userData.__grad0 = m.gradientMap || null;
+    GRADE_MATS.push(m);
+    applyGradeShader(m);
+    m.needsUpdate = true;
+    n++;
+  }
+  applyGrade(GRADE_ON);
+  report('contrast mats=' + n + ' on=' + GRADE_ON + ' c=' + GRADE_C + ' s=' + GRADE_S);
+}
+
+/* ===================== 手部肤色修正 =====================
+   有的模型（佩儿）整只手被涂成黑色：手的贴图在手部 UV 区域本身就是黑块，
+   作者本意大概是"黑手套"，但观感上像渲染坏了。
+   这里只把手部网格的"贴图采样"替换成模型自身的肤色，几何形状一动不动，
+   袖子、过膝袜这些真正该黑的地方完全不受影响。
+
+   定位方式（bind pose，即未摆姿势的原始状态，避免姿态干扰判断）：
+   - 圆心用骨骼的 bind pose 位置 = skeleton.boneInverses[i] 取逆后的平移分量
+   - 手指比手掌长（实测中指尖距手首 1.88，而手掌半径只有 1.25），
+     所以除了"手首骨为圆心"，还要加"指尖骨为圆心"才盖得到指尖
+
+   安全阀（防止误伤其他模型）：
+   - 自动识别"主手部材质"= bind pose 下手首周围顶点最多的那个材质
+   - 再采样该材质在手部 UV 处的平均亮度，只有比肤色暗 60 以上才动手
+   - 千咲/黄泉等手本来就是肤色的模型，采样出来是亮的，直接跳过          */
+const HAND_R_WRIST = 1.25;   // 手首骨为圆心、认定"手掌+手指"的半径（bind pose 单位）
+const HAND_R_TIP   = 0.45;   // 指尖骨为圆心的半径
+const HAND_R_COVER = 0.55;   // 其他材质（紧贴手的覆盖层/袖口）的过渡半径
+const HAND_DARK_K  = 60;     // 亮度差阈值：比肤色暗这么多以上才认为"被涂黑"
+
+function fixHandSkin(mesh) {
+  const sk = mesh && (mesh.isSkinnedMesh ? mesh : mesh.getObjectByProperty && mesh.getObjectByProperty('isSkinnedMesh', true));
+  if (!sk || !sk.skeleton || !sk.geometry) return 'no-mesh';
+  const g = sk.geometry;
+  if (g.userData.__xySkin) return 'already';           // 同一 geometry 只处理一次
+
+  /* 关键：必须等贴图真正可画再采样。MMDLoader 的 onLoad 触发时，
+     Texture.map 已经建好但 **image 还是 null**（贴图是异步加载的），
+     此时往 canvas 上 drawImage 画出来是空白，采样全黑，
+     会误判成"找不到肤色基准"而放弃（实测 noImg=38 踩过这个坑）。
+     所以先轮询等 image 就位，再重入本函数。 */
+  const mats = Array.isArray(sk.material) ? sk.material : [sk.material];
+  const texReady = () => {
+    for (const m of mats) {
+      if (!m || !m.map) continue;
+      const img = m.map.image;
+      if (!img) return false;                                   // image 还没赋值
+      if (typeof img.complete === 'boolean' && !img.complete) return false;
+      if (!(img.width > 0)) return false;                       // 尺寸还是 0，画不出来
+    }
+    return true;
+  };
+  if (!texReady()) {
+    let waited = 0;
+    const tick = () => {
+      if (texReady()) { fixHandSkin(mesh); return; }             // 就位后重入（标记未设，能继续跑）
+      if ((waited += 60) > 15000) return;                        // 等 15 秒还不行就放弃
+      setTimeout(tick, 60);
+    };
+    setTimeout(tick, 60);
+    return 'wait-texture';
+  }
+
+  g.userData.__xySkin = 1;
+
+  const bs = sk.skeleton.bones, inv = sk.skeleton.boneInverses;
+  const posA = g.attributes.position, uvA = g.attributes.uv;
+  const idx = g.index, N = posA.count;
+  if (!uvA || N < 100) return 'no-uv';
+
+  const bindPos = (i) => { const e = inv[i].clone().invert().elements; return [e[12], e[13], e[14]]; };
+  const find = (nm) => bs.findIndex(b => b.name === nm);
+  const iL = find('左手首'), iR = find('右手首');
+  if (iL < 0 || iR < 0) return 'no-wrist-bone';
+  const wrists = [bindPos(iL), bindPos(iR)];
+  const tips = [];
+  /* 指尖骨命名各家不同：佩儿是"左中指先"，千咲是"左中指３先"（带节序号），
+     所以中间允许可选数字。 */
+  bs.forEach((b, i) => { if (/^(左|右)(親指|人指|中指|薬指|小指)[0-9０-９]*先$/.test(b.name)) tips.push(bindPos(i)); });
+  if (!tips.length) return 'no-tip-bone';
+
+  /* 顶点 → 材质索引（同一顶点可能被多个 group 引用，取第一个） */
+  const matOf = new Int32Array(N).fill(-1);
+  g.groups.forEach(gr => { for (let k = gr.start; k < gr.start + gr.count; k++) { const v = idx ? idx.getX(k) : k; if (matOf[v] < 0) matOf[v] = gr.materialIndex; } });
+
+  const d3 = (a, b) => { const dx = a[0]-b[0], dy = a[1]-b[1], dz = a[2]-b[2]; return Math.sqrt(dx*dx+dy*dy+dz*dz); };
+  const vpos = (v) => [posA.getX(v), posA.getY(v), posA.getZ(v)];
+  const dW = (v) => Math.min(d3(vpos(v), wrists[0]), d3(vpos(v), wrists[1]));
+
+  /* 主手部材质：bind pose 下手首周围顶点最多的那个 */
+  const cnt = {};
+  for (let v = 0; v < N; v++) { const mi = matOf[v]; if (mi < 0) continue; if (dW(v) < 1.2) cnt[mi] = (cnt[mi] || 0) + 1; }
+  const mainMat = +Object.entries(cnt).sort((a, b) => b[1] - a[1])[0][0];
+  if (!(mainMat >= 0) || !sk.material[mainMat]) return 'no-main-mat';
+
+  /* 贴图采样器。注意 flipY：three.js 默认 true（此时 v=1 对应图顶），
+     而 MMD 模型的贴图常是 flipY=false（v=1 对应图底），搞反了会采到黑块。 */
+  const samplers = new Map();
+  const sampler = (mi) => {
+    if (samplers.has(mi)) return samplers.get(mi);
+    const m = sk.material[mi];
+    let fn = null;
+    if (m && m.map && m.map.image) {
+      const img = m.map.image;
+      try {
+        const cv = document.createElement('canvas'); cv.width = img.width; cv.height = img.height;
+        const cx = cv.getContext('2d'); cx.drawImage(img, 0, 0);
+        const d = cx.getImageData(0, 0, img.width, img.height).data;
+        const flip = m.map.flipY === false ? 1 : 0;
+        fn = (u, v) => {
+          const x = Math.max(0, Math.min(img.width  - 1, Math.round(u * img.width)));
+          const y = Math.max(0, Math.min(img.height - 1, Math.round((flip ? v : 1 - v) * img.height)));
+          const o = (y * img.width + x) * 4;
+          return [d[o], d[o + 1], d[o + 2]];
+        };
+      } catch (e) { fn = null; }
+    }
+    samplers.set(mi, fn);
+    return fn;
+  };
+  const lum = (c) => 0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2];
+
+  /* 模型标准肤色：遍历所有顶点的贴图采样，取"肤色区间"的平均值 */
+  let sr = 0, sg = 0, sb = 0, sn = 0;
+  for (let v = 0; v < N; v++) {
+    const mi = matOf[v]; if (mi < 0) continue;
+    const s = sampler(mi); if (!s) continue;
+    const c = s(uvA.getX(v), uvA.getY(v));
+    const r = c[0], gg = c[1], b = c[2];
+    if (r > 195 && gg > 165 && b > 140 && (r - b) > 12 && (r - b) < 70 && (r - gg) < 40) { sr += r; sg += gg; sb += b; sn++; }
+  }
+  if (sn < 50) {
+    /* 采样失败：多半是贴图还没真正可画（image.complete 为真但 width=0，
+       或者刚建好还没赋值）。这里带上现场信息，方便一眼看出原因。 */
+    let withMap = 0, zeroSize = 0, noImg = 0, maxW = 0;
+    for (const m of mats) {
+      if (!m || !m.map) continue;
+      withMap++;
+      const img = m.map.image;
+      if (!img) { noImg++; continue; }
+      if (!(img.width > 0)) zeroSize++;
+      else if (img.width > maxW) maxW = img.width;
+    }
+    return 'no-skin-ref(sn=' + sn + ',mats=' + mats.length + ',withMap=' + withMap +
+           ',zeroSize=' + zeroSize + ',noImg=' + noImg + ',maxW=' + maxW + ')';
+  }
+  const skin = [sr / sn / 255, sg / sn / 255, sb / sn / 255], skinLum = lum([sr / sn, sg / sn, sb / sn]);
+
+  /* 安全阀：主手部材质在手部 UV 处必须明显偏暗，否则说明手本来就是肤色 */
+  const sMain = sampler(mainMat);
+  if (sMain) {
+    let acc = 0, an = 0;
+    for (let v = 0; v < N; v++) {
+      if (matOf[v] !== mainMat) continue;
+      if (dW(v) >= HAND_R_WRIST) continue;
+      acc += lum(sMain(uvA.getX(v), uvA.getY(v))); an++;
+    }
+    if (an && acc / an > skinLum - HAND_DARK_K) return 'hand-already-bright';
+  }
+
+  /* 构建遮罩：主手部材质全涂，其他材质只在紧贴手处平滑过渡 */
+  const aSkin = new Float32Array(N);
+  let nHand = 0, nCov = 0;
+  for (let v = 0; v < N; v++) {
+    const mi = matOf[v]; if (mi < 0) continue;
+    const p = vpos(v), dw = dW(v);
+    if (mi === mainMat && dw < HAND_R_WRIST) { aSkin[v] = 1; nHand++; continue; }
+    if (mi === mainMat) {
+      let dt = 1e9; for (const t of tips) { const d = d3(p, t); if (d < dt) dt = d; }
+      if (dt < HAND_R_TIP) { aSkin[v] = 1; nHand++; continue; }
+    }
+    if (dw < HAND_R_COVER) {
+      const t = 1 - Math.min(1, Math.max(0, (dw - 0.35) / 0.20));
+      aSkin[v] = t * t * (3 - 2 * t);
+      if (aSkin[v] > 0.02) nCov++;
+    }
+  }
+  if (!nHand) return 'no-hand-verts';
+
+  g.setAttribute('aSkin', new THREE.BufferAttribute(aSkin, 1));
+  const SKIN_C = new THREE.Color(skin[0], skin[1], skin[2]);
+
+  /* 接管相关材质。skin 混合必须插在 map_fragment 之后（光照之前），
+     这样修完色依然正常受光，不会变成一块平板色。 */
+  const patch = (m) => {
+    if (!m || m.userData.__xySkin) return;
+    m.userData.__xySkin = 1;
+    const prevCb = m.onBeforeCompile;          // 保留对比度那段逻辑
+    m.onBeforeCompile = (sh) => {
+      if (prevCb) prevCb(sh);
+      sh.uniforms.uSkinC = { value: SKIN_C };
+      sh.vertexShader = 'attribute float aSkin;\nvarying float vSkin;\n' +
+        sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n vSkin = aSkin;');
+      sh.fragmentShader = 'uniform vec3 uSkinC;\nvarying float vSkin;\n' +
+        sh.fragmentShader.replace('#include <map_fragment>',
+          '#include <map_fragment>\n diffuseColor.rgb = mix(diffuseColor.rgb, uSkinC, vSkin);');
+      m.userData.shader = sh;
+    };
+    /* cacheKey 必须换：three.js 按它复用已编译的 program，
+       不换的话新回调根本不会被调用（实测踩过这个坑）。 */
+    m.customProgramCacheKey = () => 'xyskin' + HAND_R_WRIST + '_' + HAND_R_TIP + '_' + SKIN_C.getHexString();
+    m.needsUpdate = true;
+  };
+  const toPatch = new Set([mainMat]);
+  for (let v = 0; v < N; v++) if (aSkin[v] > 0.02 && matOf[v] >= 0) toPatch.add(matOf[v]);
+  for (const mi of toPatch) patch(sk.material[mi]);
+
+  const info = 'handskin fixed mat=' + sk.material[mainMat].name +
+               ' verts=' + nHand + ' cover=' + nCov + ' skin=[' +
+               skin.map(x => Math.round(x * 255)).join(',') + ']';
+  report(info);
+  console.log('[handskin] ' + info);
+  return info;
+}
+
+/* 调试入口：控制台 __xyHandSkin(mesh) 可看它停在哪一步 */
+window.__xyHandSkin = fixHandSkin;
+
+/* 控制台调试入口 */
+window.__xyGrade = {
+  on:  (v) => { GRADE_ON = !!v; applyGrade(GRADE_ON); return GRADE_ON; },
+  c:   (v) => { GRADE_C = v; applyGrade(GRADE_ON); return GRADE_C; },
+  s:   (v) => { GRADE_S = v; applyGrade(GRADE_ON); return GRADE_S; },
+  g:   (v) => { GRADE_G = v; applyGrade(GRADE_ON); return GRADE_G; },
+  state: () => ({ on: GRADE_ON, c: GRADE_C, s: GRADE_S, g: GRADE_G, mats: GRADE_MATS.length }),
+};
+
+/* ===================== 渲染器 / 相机 / 灯光 ===================== */
+const stage    = document.getElementById('stage');
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.setClearColor(0x000000, 0);
+stage.appendChild(renderer.domElement);
+
+const scene  = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(34, innerWidth / innerHeight, 0.01, 500);
+
+/* 光照配比（配合上面的硬色阶 toon）：环境光压低、主光抬高，明暗分界才立得住。
+   总亮度基本不变，只是把"平"换成"有层次"。 */
+scene.add(new THREE.HemisphereLight(0xffffff, 0x9aa4b8, 0.34));
+const keyL  = new THREE.DirectionalLight(0xffffff, 1.02); keyL.position.set(1.2, 1.8, 2.4);  scene.add(keyL);
+const fillL = new THREE.DirectionalLight(0xdfe4f0, 0.20); fillL.position.set(-2.0, 1.0, 1.6); scene.add(fillL);
+const rimL  = new THREE.DirectionalLight(0xcdd9ff, 0.60); rimL.position.set(-0.4, 1.2, -2.4); scene.add(rimL);
+
+let rig = null, bones = {}, boneHome = {}, baseY = 0, fitting = false;
+let morphMesh = null;                 // 承载表情（morph）的网格
+let mBlink = -1, mSmile = -1, mWink = -1;   // 眨眼 / 微笑 / 单眼眨 的 morph 索引，<0 表示模型没有
+let pokeFace = { surprise: [], annoyed: [] };   // 点击反馈表情组 [[morphIndex, weight], ...]
+let activityFace = {};                          // 活动反应表情组（屏幕感知出口，同上格式）
+let mBrow = [];                             // 备用：眉 morph（暂不驱动）
+let mVowels = [-1, -1, -1, -1, -1];         // あ い う え お —— 口型同步用
+/* 每元音增益：MMD 的 い/え 表情本身幅度小，单独放大才看得出来 */
+const MOUTH_GAIN = [1.25, 1.75, 1.45, 1.50, 1.35];   // a i u e o
+
+/* 从表情名里按关键词挑出需要的表情。
+   MMD 表情名是日文，常见：まばたき=眨眼、笑い/にこり=笑、ウィンク=单眼眨。
+   匹配不到就留 -1，动画时自动跳过（不会报错）。 */
+function pickMorphs(keys) {
+  const find = (words) => {
+    for (const w of words) {
+      for (const k of keys) if (k.indexOf(w) >= 0) return k;
+    }
+    return null;
+  };
+  const b = find(['まばたき', 'blink', 'Blink', '瞬き', '眨眼']);
+  const s = find(['笑い', 'にこり', 'にっこり', 'smile', 'Smile', '笑顔', '微笑']);
+  const w = find(['ウィンク', 'wink', 'Wink']);
+  const dict = morphMesh.morphTargetDictionary || {};
+  if (b && dict[b] !== undefined) mBlink = dict[b];
+  if (s && dict[s] !== undefined) mSmile = dict[s];
+  if (w && dict[w] !== undefined) mWink = dict[w];
+
+  /* 点击反馈表情：按 POKE_FACE_SPEC 解析成 [[索引, 权重], ...]。
+     换模型没有这些表情时组会变短甚至为空，反应自动退化成"只有身体动作"。 */
+  for (const grp in POKE_FACE_SPEC) {
+    pokeFace[grp] = [];
+    for (const [nm, w] of POKE_FACE_SPEC[grp]) {
+      if (dict[nm] !== undefined) pokeFace[grp].push([dict[nm], w]);
+    }
+  }
+
+  /* 活动反应表情：同样按名字解析，找不到的跳过；两组全缺时 success 退化为笑肌 */
+  for (const grp in ACTIVITY_FACE_SPEC) {
+    activityFace[grp] = [];
+    for (const [nm, w] of ACTIVITY_FACE_SPEC[grp]) {
+      if (dict[nm] !== undefined) activityFace[grp].push([dict[nm], w]);
+    }
+  }
+  if ((!activityFace.success || !activityFace.success.length) && mSmile >= 0) {
+    activityFace.success = [[mSmile, 0.9]];
+  }
+
+  /* 口型：MMD 标准表情名是「あいうえお」，部分模型用 A/I/U/E/O */
+  const VOWELS = [['あ', 'A', 'a'], ['い', 'I', 'i'], ['う', 'U', 'u'],
+                  ['え', 'E', 'e'], ['お', 'O', 'o']];
+  const exact = (words) => {
+    for (const wd of words) if (dict[wd] !== undefined) return dict[wd];
+    for (const wd of words) {
+      for (const k of keys) if (k.indexOf(wd) >= 0) return dict[k];
+    }
+    return -1;
+  };
+  mVowels = VOWELS.map(exact);
+  window.__xyMouthReady = mVowels.filter(v => v >= 0).length;
+  report('pmxexpr blink=' + mBlink + ' smile=' + mSmile + ' wink=' + mWink +
+         ' vowels=' + mVowels.join(',') +
+         ' poke=' + pokeFace.surprise.map(e => e[0]).join('/') + '|' +
+         pokeFace.annoyed.map(e => e[0]).join('/'));
+}
+const t0 = performance.now();
+
+function syncSize() {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+}
+
+function report(msg) {
+  new Image().src = '/api/3dprobe?d=' + encodeURIComponent(msg).replace(/%20/g, '+');
+}
+
+/* ===================== 自动取景（读屏幕上真实画出的那一帧） ===================== */
+function screenSilhouette() {
+  const gl = renderer.getContext();
+  const W = renderer.domElement.width, H = renderer.domElement.height;
+  const buf = new Uint8Array(W * H * 4);
+  gl.readPixels(0, 0, W, H, gl.RGBA, gl.UNSIGNED_BYTE, buf);
+  let x0 = 1e9, x1 = -1, y0 = 1e9, y1 = -1;
+  for (let y = 0; y < H; y++) {
+    const rb = (H - 1 - y) * W * 4;          // readPixels 行序自下而上，翻回来
+    for (let x = 0; x < W; x++) {
+      if (buf[rb + x * 4 + 3] > 8) {
+        if (x < x0) x0 = x; if (x > x1) x1 = x;
+        if (y < y0) y0 = y; if (y > y1) y1 = y;
+      }
+    }
+  }
+  return { x0, x1, y0, y1, W, H };
+}
+
+function autofit() {
+  if (!rig) return;
+  /* ★ 动作播放期间禁止屏幕取景：动作姿势部分出框 + readPixels 时序问题，
+     会让剪影测高严重偏小（实测 1.1 → 0.117），镜头正反馈怼到脸上。
+     动作机位由 frameMotion（骨骼包围盒）固定；退出动作时 motionCam 已清空，这里恢复放行。 */
+  if (danceOn && motionCam) return;
+  fitting = true;
+  try { autofitInner(); }
+  catch (e) { report('pmxfiterr ' + (e && e.message ? e.message : e)); }
+  finally { fitting = false; }        // 无论异常与否都复位，否则动画永久暂停
+}
+
+function autofitInner() {
+  syncSize();
+  const fov = camera.fov * Math.PI / 180;
+  rig.updateWorldMatrix(true, true);
+  const size = new THREE.Box3().setFromObject(rig).getSize(new THREE.Vector3());
+  rig.rotation.y = YAW; rig.position.set(0, 0, 0);
+  let dist = Math.max(0.05, (size.y * 1.6 / 2) / Math.tan(fov / 2));
+  let last = null;
+  for (let pass = 0; pass < 3; pass++) {
+    if (pass > 0 && last) rig.position.set(last.px, last.py, 0);
+    camera.position.set(0, 0, dist);
+    camera.lookAt(0, 0, 0);
+    renderer.render(scene, camera);
+    const s = screenSilhouette();
+    if (s.x1 < 0) break;
+    const k = (2 * dist * Math.tan(fov / 2)) / s.H;
+    const hW = (s.y1 - s.y0 + 1) * k;
+    const cxW = ((s.x0 + s.x1) / 2 - s.W / 2) * k;
+    const cyW = ((s.y0 + s.y1) / 2 - s.H / 2) * k;
+    const px = (last ? last.px : rig.position.x) - cxW;
+    const py = (last ? last.py : rig.position.y) - cyW;
+    last = { px, py, hW, dist };
+    dist = Math.max(0.05, (hW * MARGIN / 2) / Math.tan(fov / 2));
+    rig.position.set(px, py, 0);
+  }
+  if (last) {
+    rig.position.set(last.px + NUDGE_X * last.hW, last.py + NUDGE_Y * last.hW, 0);
+    baseY = rig.position.y;
+    /* 保险余量：理论留白之外再抬一手，防止个别模型（裙摆长/骨骼包围盒偏大）
+       在动作摆动或地面吸附时蹭到窗口上下边。只影响取景远近，不改模型本身。 */
+    camera.position.set(0, 0, last.dist * 1.03);
+    camera.lookAt(0, 0, 0);
+    idleDist = last.dist * 1.03;
+    report('pmxfit h=' + last.hW.toFixed(3) + ' dist=' + (last.dist * 1.03).toFixed(3));
+    return;
+  }
+  camera.position.set(0, 0, dist);
+  camera.lookAt(0, 0, 0);
+  idleDist = dist;
+}
+
+/* ===================== 骨骼名匹配 =====================
+   MMD/FBX 模型的骨骼名来自 MikuMikuDance 的日文命名规范。
+   （也兼容部分英文化导出）。找不到对应骨骼时该项动作自动跳过，不会报错。 */
+/* MMD 标准日文骨骼名（足=大腿、ひざ=膝/小腿、足首=脚踝、ひじ=肘、腕捩=上臂扭转、
+   手捩=手腕扭转）。下半身 = 髋部/臀部，左右扭腰靠它；センター 一动整个人就跟着走，所以只锁不扭。
+   ⚠ 这些名字是从 PMX 里实读出来的（tools/pmxbones.mjs），不要凭印象改成英文——
+      这个模型根本没有英文骨骼名，写英文别名必然匹配不上、动作全部静默失效。 */
+/* 只保留会被驱动的骨骼。手臂只剩静态摆放（armL/armR 垂放 + foreArm 微弯），
+   肩/腕捩/手捩/手首 不再参与待机，故别名里也一并去掉。 */
+const BONE_ALIAS = {
+  hips:      ['センター'],
+  lowerBody: ['下半身'],
+  spine:     ['上半身'],
+  chest:     ['上半身2'],
+  neck:      ['首'],
+  head:      ['頭'],
+  armL:      ['左腕'],      armR:      ['右腕'],
+  foreArmL:  ['左ひじ'],    foreArmR:  ['右ひじ'],
+  /* 手捩 = 手腕扭转骨（MMD 专门用来"翻掌"的骨骼），指尖骨用来算出"骨长轴"方向，
+     好让手绕自己的轴转而不是甩出去。各模型指尖骨命名不一（左手先/左手首先/左中指先），
+     最后兜底用 手首 —— 只要有手就能扭。 */
+  twistL:    ['左手捩'],    twistR:    ['右手捩'],
+  tipL:      ['左手首先', '左手先', '左中指先', '左手首'],
+  tipR:      ['右手首先', '右手先', '右中指先', '右手首'],
+  legL:      ['左足'],      legR:      ['右足'],
+  shinL:     ['左ひざ'],    shinR:     ['右ひざ'],
+  /* 眼骨（实读确认：佩儿 94|右目 96|左目，parent=頭）。找不到就静默跳过，
+     换没有眼骨的模型时眼神自动关闭，不报错。両目 是独立分支（parent=頭，不是左右目的父），
+     驱动左右目即可，动両目 只会重复位移。 */
+  eyeL:      ['左目'],      eyeR:      ['右目'],
+};
+
+/* ===================== 裙摆 / 头发的"绕身行进波" =====================
+   模型里这类附属摆动骨骼命名是 "裙_层号_链号"（如 裙_0_0 ~ 裙_3_15，共 16 条链 × 4 层）。
+   做法：
+   1) 按"链"收集，同一条链自上而下 4 节，越往下摆幅越大（末端最大）；
+   2) 用链根骨骼相对父骨骼的偏移算出这条链在身体上的方位角 θ；
+   3) 绕轴 (-cosθ, 0, sinθ) 旋转 = 让这条链朝自己的"外侧"甩出去；
+   4) 相位里带上 θ，波就沿着裙摆一圈一圈地传过去，像被风吹过而不是整体平移。 */
+const SWAY_AMP = [
+  { re: /裙吊繩|吊繩/, amp: 0.10 },
+  { re: /裙/,         amp: SKIRT_AMP },
+  { re: /後髪|髪/,    amp: HAIR_AMP },
+  { re: /劉海/,       amp: BANG_AMP },
+  { re: /環帶/,       amp: 0.05 },
+];
+const SWAY_DEFAULT_AMP = 0.03;
+
+let swayGroups = [];   // [{ base, amp, isHair, omega, chains:[{ theta, links:[{bone, home}] }] }]
+let fingerBones = [];  // [{ bone, home:{rx,ry,rz}, phase }]
+
+function collectSway(boneMap) {
+  const byBase = {};
+  for (const nm in boneMap) {
+    const m = nm.match(/^(.+?)_(\d+)_(\d+)$/);       // 例：裙_2_13 → base=裙 lv=2 chain=13
+    if (!m) continue;
+    const base = m[1], lv = parseInt(m[2], 10), ch = parseInt(m[3], 10);
+    if (!byBase[base]) byBase[base] = {};
+    if (!byBase[base][ch]) byBase[base][ch] = [];
+    byBase[base][ch].push({ lv, bone: boneMap[nm] });
+  }
+  const groups = [];
+  for (const base in byBase) {
+    let amp = SWAY_DEFAULT_AMP;
+    for (const s of SWAY_AMP) { if (s.re.test(base)) { amp = s.amp; break; } }
+    const isHair = /髪|劉海/.test(base);
+    const chains = [];
+    for (const c in byBase[base]) {
+      const links = byBase[base][c].sort((a, b) => a.lv - b.lv).map((o) => {
+        const b = o.bone;
+        return { bone: b, home: b.quaternion.clone() };
+      });
+      const p = links[0].bone.position;               // 链根相对父骨骼的偏移 = 它在身体上的方位
+      chains.push({ theta: Math.atan2(p.x, p.z), links });
+    }
+    chains.sort((a, b) => a.theta - b.theta);         // 按方位角排序，波才朝一个方向绕
+    groups.push({ base, amp, isHair, chains, omega: isHair ? 1.55 : 1.25 });
+  }
+  return groups;
+}
+
+/* 手指：五指各 3 节（親指是 ０/１/２，其余是 １/２/３），做极轻微的一张一握。
+   幅度刻意压得很小——手指方向各模型不同，幅度一大就可能变成"鸡爪"。 */
+function collectFingers(boneMap) {
+  fingerBones = [];
+  let i = 0;
+  for (const nm in boneMap) {
+    if (!/^(左|右)(親指|人指|中指|薬指|小指)([0-9０-９])$/.test(nm)) continue;
+    const b = boneMap[nm];
+    fingerBones.push({
+      bone: b,
+      home: { rx: b.rotation.x, ry: b.rotation.y, rz: b.rotation.z },
+      phase: (i % 5) * 0.7 + (nm[0] === '左' ? 0 : 0.33),
+    });
+    i++;
+  }
+}
+
+function collectBones(root) {
+  const out = {};
+  root.traverse((o) => { if (o.isBone) out[o.name] = o; });
+  return out;
+}
+
+function findBone(boneMap, aliases) {
+  for (const a of aliases) {
+    if (boneMap[a]) return boneMap[a];
+  }
+  for (const a of aliases) {                    // 退而求其次：包含匹配
+    for (const nm in boneMap) {
+      if (nm.includes(a) || a.includes(nm)) return boneMap[nm];
+    }
+  }
+  return null;
+}
+
+/* 模块级骨骼写入（animateBones 的 set/lock 是局部闭包，眼神要在 loop 的
+   动作分支里也叠一份，必须提出来共用）。写入前查 bones/boneHome，
+   模型没这根骨时静默跳过 —— 换模型缺骨不报错。 */
+function setBone(k, x, y, z) {
+  const b = bones[k]; if (!b) return;
+  const hm = boneHome[k]; if (!hm) return;
+  b.rotation.set(hm.rx + x, hm.ry + y, hm.rz + z);
+}
+
+/* ===================== 加载 =====================
+   MMD 的 PMX 格式内字符串是 UTF-16LE，MMDLoader 原生支持，日文骨骼名不会乱码。
+   纹理路径仍可能带反斜杠，用 LoadingManager 的 URL 修改器统一成正斜杠。
+   ★ 支持切换形象：loadModel(url, resPath) 可反复调用，换模型就换这两个参数。 */
+const manager = new THREE.LoadingManager();
+manager.setURLModifier((url) => {
+  if (url.startsWith('blob:') || url.startsWith('data:')) return url;
+  return url.replace(/\\/g, '/');
+});
+const loader = new MMDLoader(manager);
+
+function loadModel(modelUrl, resPath) {
+  stopDance(true);            // 换模型：先卸掉旧动作、清空旧骨骼快照
+  danceMesh = null; boneSnap = null; danceRoot = null;
+  loader.setResourcePath(resPath);
+  loader.load(modelUrl, (mesh) => {
+  // MMDLoader 回调给的是 SkinnedMesh 本体
+  mesh.updateWorldMatrix(true, true);
+  const box = new THREE.Box3().setFromObject(mesh);
+  const size = box.getSize(new THREE.Vector3());
+  const center = box.getCenter(new THREE.Vector3());
+  report('pmxraw size=' + [size.x, size.y, size.z].map(v => v.toFixed(2)).join('x'));
+  const h = size.y || 1;
+  const s = 1 / h;
+  mesh.scale.setScalar(s);
+  mesh.position.set(-center.x * s, -box.min.y * s, -center.z * s);
+
+  // 中心挪回原点（否则相机 lookAt 原点=看脚底，身体会跑到画面外）
+  const holder = new THREE.Group();
+  holder.add(mesh);
+  holder.position.set(0, -0.5, 0);
+  holder.updateWorldMatrix(true, true);
+  const b2 = new THREE.Box3().setFromObject(holder);
+  report('pmxnorm size=' + [b2.max.x - b2.min.x, b2.max.y - b2.min.y, b2.max.z - b2.min.z]
+         .map(v => v.toFixed(3)).join('x') + ' minY=' + b2.min.y.toFixed(3));
+
+  rig = new THREE.Group();
+  rig.add(holder);
+  scene.add(rig);
+  rig.updateWorldMatrix(true, true);
+
+  // 观感增强：硬色阶 toon + 压低 ambient（对比度）
+  enhanceMaterials(mesh);
+  // 手部肤色修正（只对"手被涂黑"的模型生效，如佩儿）
+  window.__xyHandSkinLog = (window.__xyHandSkinLog ? window.__xyHandSkinLog + ' | ' : '') + fixHandSkin(mesh);
+
+  // 骨骼收集 + 名称上报（用于确认别名是否匹配上）
+  const bm = collectBones(mesh);
+  const allNames = Object.keys(bm);
+  window.__xyBones = bm;      // 调试：控制台可直接取任意骨骼对象试轴向（如 __xyBones['左手捩']）
+  for (const key in BONE_ALIAS) {
+    const b = findBone(bm, BONE_ALIAS[key]);
+    if (b) { bones[key] = b; boneHome[key] = { rx: b.rotation.x, ry: b.rotation.y, rz: b.rotation.z }; }
+  }
+  // 眼神可用性：左右目都匹配上才启用（换没有眼骨的模型时自动关闭，不报错）
+  gaze.hasBones = !!(bones.eyeL && bones.eyeR);
+  report('pmxgaze ' + (gaze.hasBones ? 'eyeL+eyeR ok' : 'no-eye-bones disabled'));
+  window.__xyDbg = { bones: bones, boneHome: boneHome, bm: bm, gaze: gaze,
+                     animateBones: animateBones };  // 诊断钩子
+  // 分批上报骨骼名与匹配结果
+  const found = Object.keys(bones).join(',');
+  report('pmxbones found=' + found);
+
+  // 裙摆 / 头发 / 手指
+  swayGroups = collectSway(bm);
+  collectFingers(bm);
+  report('pmxsway ' + swayGroups.map(g => g.base + ':' + g.chains.length).join(' ')
+         + ' fingers=' + fingerBones.length);
+
+  // ---- 表情（morph）：列出模型自带的全部表情名，便于确认该驱动哪个 ----
+  morphMesh = mesh;
+  const dict = mesh.morphTargetDictionary || {};
+  const mkeys = Object.keys(dict);
+  report('pmxmorph count=' + mkeys.length);
+  for (let i = 0; i < mkeys.length; i += 25) {
+    report('pmxmorphname ' + i + ' ' + mkeys.slice(i, i + 25).join('|'));
+  }
+  // 按关键词自动挑出"眨眼"和"微笑"
+  pickMorphs(mkeys);
+
+  /* 动作库接管：记录全骨骼初始姿态（退出 VMD 时精确复位），
+     并记住 センター 的原位（跳舞时锁死水平位移，只留上下起伏）。 */
+  danceMesh = mesh;
+  boneSnap = snapshotSkeleton(mesh);
+  danceRoot = bones['hips']
+    ? { x: bones['hips'].position.x, y: bones['hips'].position.y, z: bones['hips'].position.z }
+    : null;
+  rig.updateWorldMatrix(true, true);
+  const _fy = danceFootY();                       // 记录静止时双足最低点（地面吸附基准）
+  danceGround = { restY: _fy, off: 0 };
+  report('dancebind bones=' + (boneSnap ? boneSnap.length : 0)
+         + ' root=' + (danceRoot ? 'yes' : 'no') + ' foot=' + (_fy === null ? 'none' : _fy.toFixed(4)));
+  syncMotion();               // 立即按后端选择恢复动作（默认 idle）
+
+  autofit();
+  setTimeout(autofit, 800);
+  setTimeout(autofit, 2200);
+}, (p) => {
+  if (p.total) report('pmxprogress ' + Math.round(p.loaded / p.total * 100) + '%');
+}, (err) => {
+  report('pmxfail ' + (err && err.message ? err.message : err));
+});
+}
+
+/* ===================== 启动：取当前模型并加载；轮询切换 ===================== */
+async function boot() {
+  try {
+    const j = await (await fetch('/api/models', { cache: 'no-store' })).json();
+    const list = j.models || [];
+    /* ?model=<key>：单模型预览窗用（桌面上"看XX.bat"）。指定后锁死这个形象，
+       不再跟着后端 current 变——否则桌面上换一个模型，预览窗会跟着跳。 */
+    const wantKey = (_q.get('model') || '').trim();
+    /* 本页只认 PMX：/api/models 会把 assets/*.vrm 也列进来，
+       若 current 正好是 VRM，cur.pmx 为空会导致加载 404（白屏）。
+       所以按 kind 过滤后再选，PMX 之间切换行为完全不变。 */
+    const pmxOnly = list.filter(m => (m.kind || (m.pmx ? 'pmx' : 'vrm')) === 'pmx');
+    const cur = (wantKey && pmxOnly.find(m => m.key === wantKey))
+             || pmxOnly.find(m => m.key === j.current) || pmxOnly[0];
+    if (wantKey) LOCK_MODEL = true;
+    if (!cur) { report('models none-pmx'); } else {
+      MODEL_URL = '/assets/' + cur.pmx;
+      RES_PATH  = MODEL_URL.slice(0, MODEL_URL.lastIndexOf('/') + 1);
+      CUR_MODEL_KEY = cur.key;
+      const p = cur.params || {};
+      if (typeof p.yaw       === 'number') YAW       = p.yaw;
+      if (typeof p.margin    === 'number') MARGIN    = p.margin;
+      if (typeof p.nudge_x   === 'number') NUDGE_X   = p.nudge_x;
+      if (typeof p.nudge_y   === 'number') NUDGE_Y   = p.nudge_y;
+      if (typeof p.arm_drop  === 'number') ARM_DROP  = p.arm_drop;
+      if (typeof p.arm_fwd   === 'number') ARM_FWD   = p.arm_fwd;
+      if (typeof p.elbow     === 'number') ELBOW_BEND = p.elbow;
+      /* 白色系模型（庚辰/洛天依/小玉这类全白衣装）默认调色会发灰，
+         可在 model.json 里按模型单独加强：params.contrast / params.saturate。
+         高光接近削顶的模型（亮度逼近 225）改用 params.gamma（默认 0.85，
+         越大越暗），先把亮度压回来再提对比，否则高光一削顶 σ 就不再涨。 */
+      if (typeof p.contrast  === 'number') GRADE_C = p.contrast;
+      if (typeof p.saturate  === 'number') GRADE_S = p.saturate;
+      if (typeof p.gamma     === 'number') GRADE_G = p.gamma;
+      if (typeof p.bright    === 'number') GRADE_B = p.bright;
+      report('model cur=' + cur.key + ' url=' + MODEL_URL);
+    }
+  } catch (e) {
+    report('modelsfetchfail ' + (e && e.message ? e.message : e));  // 兜底：仍加载佩儿
+  }
+  loadModel(MODEL_URL, RES_PATH);
+}
+boot();
+
+/* 右键菜单 / 托盘切换模型后：后端 current 变化 -> 2 秒内自动重载新形象 */
+setInterval(async function () {
+  if (LOCK_MODEL) return;              // 单模型预览窗：不跟随后端切换
+  try {
+    const j = await (await fetch('/api/models', { cache: 'no-store' })).json();
+    /* 只在"新 current 也是 PMX"时重载。若 current 切成了 VRM（如 avaturn_nn），
+       本页加载不了它，重载只会无限循环——保持当前 PMX 壳，等壳层换页。 */
+    const curM = (j.models || []).find(m => m.key === j.current);
+    if (j && j.current && j.current !== CUR_MODEL_KEY
+        && (curM ? (curM.kind || (curM.pmx ? 'pmx' : 'vrm')) === 'pmx' : false)) {
+      report('modelswitch ' + CUR_MODEL_KEY + ' -> ' + j.current);
+      location.reload();
+    }
+  } catch (e) {}
+}, 2000);
+
+/* ===================== 实时调色通道（/api/grade） =====================
+   调参窗（pmxtune.html，右键菜单"调参"打开）拖滑块 -> 后端 seq+1 ->
+   这里 0.7 秒内把新参数塞进材质 uniform。全程不重载模型、不碰动作库，
+   所以正在跳的舞不会被打断，只是颜色跟着变。 */
+let GRADE_SEQ = -1;
+function applyGradeParams(p) {
+  if (!p) return;
+  if (typeof p.contrast === 'number') GRADE_C = p.contrast;
+  if (typeof p.saturate === 'number') GRADE_S = p.saturate;
+  if (typeof p.gamma    === 'number') GRADE_G = p.gamma;
+  if (typeof p.bright   === 'number') GRADE_B = p.bright;
+  applyGrade(GRADE_ON);
+}
+async function pollGrade() {
+  try {
+    const j = await (await fetch('/api/grade?model=' + encodeURIComponent(CUR_MODEL_KEY || ''),
+                                 { cache: 'no-store' })).json();
+    if (j && typeof j.seq === 'number' && j.seq !== GRADE_SEQ) {
+      GRADE_SEQ = j.seq;
+      applyGradeParams(j.params);
+    }
+  } catch (e) {}
+}
+setInterval(pollGrade, 700);
+
+/* ?tune 打开内嵌调色面板：小窗预览时也能边看边调（iframe 复用同一个面板页，
+   面板只管发参数，画面靠上面的轮询接住，两边不用互相传消息） */
+if (_q.has('tune')) {
+  /* 面板占右侧 262px：把舞台让出来，取景重新算一遍，模型不会被面板压住 */
+  const stage = document.getElementById('stage') || document.body;
+  stage.style.right = '262px';
+  const fr = document.createElement('iframe');
+  const mk = (_q.get('model') || '').trim();
+  fr.src = '/pmxtune.html?embed=1' + (mk ? '&model=' + encodeURIComponent(mk) : '');
+  fr.style.cssText = 'position:fixed;right:8px;top:8px;width:252px;height:238px;border:0;' +
+                     'z-index:70;background:transparent;';
+  document.body.appendChild(fr);
+  setTimeout(autofit, 1200);
+  setTimeout(autofit, 2600);
+}
+
+let rzTimer = null;
+addEventListener('resize', () => { syncSize(); clearTimeout(rzTimer); rzTimer = setTimeout(autofit, 300); });
+
+/* ===================== 姿势调试钩子（?shot=1 或控制台手动调用） =====================
+   用途：让 AI/开发者不依赖窗口可见性就能拍到任意时刻的姿势 ——
+   __xyPose.setGesture(type, side, dur) 强制指定小动作；
+   __xyPose.shot(t) 用给定时钟渲染一帧并返回 dataURL。
+   正常使用（不带 ?shot）也无副作用，只是多暴露一个对象。 */
+window.__xyPose = {
+  shot: function (t, yaw) {
+    if (rig) {
+      if (danceOn && mixer) mixer.update(0);          // 动作模式：定格当前 VMD 姿势
+      else if (t !== undefined) animateBones(t);
+      rig.rotation.set(0, (yaw === undefined ? YAW : yaw), 0);   // 第 2 参数：换视角看姿势
+      rig.position.x = 0; rig.position.y = baseY; rig.position.z = 0;
+    }
+    renderer.render(scene, camera);
+    return renderer.domElement.toDataURL('image/png');
+  },
+  setGesture: function (type, side, dur) {
+    gesture = type ? { type: type, side: side || 1, t0: 0, dur: dur || 2.5 } : null;
+    return gesture ? gesture.type : null;
+  },
+  clock: function () { return (performance.now() - t0) / 1000; },
+  /* 特写镜头：把相机移到世界坐标 (x,y,z) 附近 —— 调试姿势细节用。
+     dist = 距离，az = 水平方位角（0=正面，±1.57=左右侧）。 */
+  zoomAt: function (x, y, z, dist, az) {
+    const a = az || 0;
+    camera.position.set(x + Math.sin(a) * dist, y, z + Math.cos(a) * dist);
+    camera.lookAt(x, y, z);
+    camera.updateProjectionMatrix();
+    return true;
+  },
+  /* 骨骼世界坐标（特写时用来定位） */
+  bonePos: function (name) {
+    const b = window.__xyBones && window.__xyBones[name];
+    if (!b) return null;
+    const m = b.matrixWorld.elements;
+    return [m[12], m[13], m[14]];
+  },
+  /* 招手姿势实时微调（调试用）：tuneWave({lift, elbow, fwd, wrist, swing}) */
+  tuneWave: function (o) {
+    o = o || {};
+    if (typeof o.lift  === 'number') WAVE_ARM_LIFT  = o.lift;
+    if (typeof o.elbow === 'number') WAVE_ELBOW     = o.elbow;
+    if (typeof o.fwd   === 'number') WAVE_ELBOW_FWD = o.fwd;
+    if (typeof o.wrist === 'number') WAVE_WRIST     = o.wrist;
+    if (typeof o.swing === 'number') WAVE_SWING     = o.swing;
+    return { lift: WAVE_ARM_LIFT, elbow: WAVE_ELBOW, fwd: WAVE_ELBOW_FWD,
+             wrist: WAVE_WRIST, swing: WAVE_SWING };
+  },
+  /* 随机动作状态机快照（排查"动作不触发"用） */
+  state: function () {
+    return { clock: (performance.now() - t0) / 1000, nextGestureAt: nextGestureAt,
+             greeted: greeted, motion: { key: danceKey, playing: danceOn,
+                                         loading: danceLoading, count: danceList.length,
+                                         mixerTime: mixer ? mixer.time : 0 },
+             gesture: gesture ? { type: gesture.type, side: gesture.side, t0: gesture.t0, dur: gesture.dur } : null };
+  },
+};
+
+/* ===================== 动作库（VMD 舞蹈，来自模之屋） =====================
+   设计：
+   1) 硬编码待机（下面 animateBones）保留为 "idle"，它是"绝不漂、不扭曲"的兜底；
+   2) 选中某个 VMD 后，骨骼改由 AnimationMixer 驱动，**同时停用 animateBones**，
+      否则两套每帧互相覆盖，会出现抽搐；
+   3) 退出动作时用全骨骼快照精确复位（只复位 BONE_ALIAS 那几根不够，手指/裙骨会留残姿）；
+   4) 舞蹈的 センター 带水平位移，桌宠窗口很小，锁死 x/z、只留上下起伏，避免她跳出画框；
+   5) 动作清单与选择由后端 /api/motions 提供（托盘 / 右键菜单改它），本页 2 秒跟随。 */
+let danceMesh = null, mixer = null, danceAction = null;
+let danceKey = 'idle', danceOn = false, danceLoading = '';
+let danceMap = {}, danceList = [];
+let boneSnap = null, danceRoot = null;
+let motionCam = null;           // 动作专用机位 {dist, cy}（骨骼包围盒算出来的，整段动作固定）
+const homeRoot = new Map();     // 根位移骨骼（全ての親/センター/足ＩＫ）的原位缓存
+const danceClock = new THREE.Clock();
+/* 用 MMDAnimationHelper（physics=false）而不是裸 AnimationMixer：
+   helper 额外解算 足ＩＫ（脚不悬空/不穿地）与 grant 捩骨（手腕手臂过渡更顺），
+   这是 MMD 动作在"别人的模型"上不扭曲的关键。物理（裙/发刚体）不开，避免引入 ammo.js。 */
+const danceHelper = new MMDAnimationHelper({ afterglow: 0.0, pmxAnimation: true });
+
+function snapshotSkeleton(mesh) {
+  const arr = [];
+  const sk = mesh && mesh.skeleton;
+  if (!sk || !sk.bones) return arr;
+  for (const b of sk.bones) {
+    arr.push({ b: b, q: b.quaternion.clone(), p: b.position.clone() });
+  }
+  return arr;
+}
+
+function restoreSkeleton() {
+  if (!boneSnap) return;
+  for (const s of boneSnap) {
+    s.b.quaternion.copy(s.q);
+    s.b.position.copy(s.p);
+  }
+}
+
+function stopDance(silent) {
+  if (danceMesh) {
+    try { danceHelper.remove(danceMesh); } catch (e) {}
+  }
+  danceHelper.enabled.ik = true;      // 恢复 IK（待机的足ＩＫ兜底还要用）
+  if (mixer) {
+    try { mixer.stopAllAction(); if (danceMesh) mixer.uncacheRoot(danceMesh); } catch (e) {}
+  }
+  mixer = null; danceAction = null; danceOn = false; danceKey = 'idle'; danceLoading = '';
+  danceGround.off = 0;
+  motionCam = null;          // 退出动作：丢掉动作机位，回到待机取景
+  homeRoot.clear();          // 根骨骼原位缓存随动作一起清（换模型/换动作都要重记）
+  restoreSkeleton();
+  if (rig) autofit();        // 复位镜头（待机取景），否则会停在舞蹈的大远景
+  if (!silent) report('motionstop');
+}
+
+function playDance(key) {
+  if (!danceMesh || !danceMap[key]) return;
+  if (danceOn && danceKey === key) return;
+  if (danceLoading === key) return;
+  danceLoading = key;
+  report('motionload ' + key + ' ' + danceMap[key].url);
+  loader.loadAnimation(danceMap[key].url, danceMesh, function (clip) {
+    danceLoading = '';
+    /* ★ 跨模型保命：很多舞蹈 VMD 带 左足ＩＫ/右足ＩＫ/つま先ＩＫ 的关键帧。
+       IK 目标骨是按原作者模型的腿长摆位的，放到别的模型上会把整只人拽出画框
+       （实测卡芙卡/弱音跳 Phut hon 时头飞出窗口顶）。这里把 IK 骨轨道直接删掉，
+       让足ＩＫ解算退化为"骨骼动画本身"，人在原地，脚不悬空。 */
+    if (clip && clip.tracks) {
+      const kept = [];
+      let dropped = 0;
+      for (const tr of clip.tracks) {
+        const mm = tr.name.match(/^([^\.]+)\.(position|quaternion)$/);
+        const bn = mm ? mm[1] : '';
+        if (bn.indexOf('ＩＫ') >= 0 || bn.indexOf('IK') >= 0) { dropped++; continue; }
+        kept.push(tr);
+      }
+      if (dropped) {
+        clip.tracks = kept;
+        clip.resetDuration();
+        report('motionikdrop ' + key + ' tracks=' + dropped);
+      }
+    }
+    if (!clip || !clip.tracks || !clip.tracks.length) {
+      report('motionempty ' + key);
+      return;
+    }
+    try { danceHelper.remove(danceMesh); } catch (e) {}
+    restoreSkeleton();                       // 先把上一支舞的残姿清掉，再播新动作
+    danceHelper.add(danceMesh, { animation: clip, physics: false });
+    mixer = danceHelper.objects.get(danceMesh).mixer;   // helper 的内部 mixer（IK/grant 由它带跑）
+    danceAction = mixer.clipAction(clip);
+    danceAction.setLoop(THREE.LoopRepeat, Infinity);
+    danceAction.clampWhenFinished = false;
+    danceAction.reset().play();
+    danceOn = true; danceKey = key;
+    danceClock.getDelta();
+    report('motionplay ' + key + ' dur=' + clip.duration.toFixed(2)
+           + ' tracks=' + clip.tracks.length);
+    /* ★ 关保险：CCD IK 的目标骨（左足ＩＫ 等）也被我们删掉了动画轨道，会停在
+       bind 位。但 helper 的 ikSolver 仍会把"腿"往目标位掰（目标在原地=伸直腿），
+       与舞蹈的腿部动画打架 → 腿被拉直、脚踝拖地、整体下沉/顶飞。
+       舞蹈期间直接关掉 IK 解算，腿部完全跟骨骼关键帧走。 */
+    danceHelper.enabled.ik = false;
+    /* 动作取景：按动作全段骨骼包围盒一次性定机位（不再用屏幕像素法，见 frameMotion 注释） */
+    frameMotion(key);
+  }, undefined, function (e) {
+    danceLoading = '';
+    report('motionfail ' + key + ' ' + (e && e.message ? e.message : e));
+  });
+}
+
+/* 舞蹈期间：根位移骨骼锁死（只留少量 Y 起伏），她只在原地跳。
+   ★ 必须在 helper.update() 之后做：helper 每帧 _restoreBones 会用 mixer 结果
+     覆盖骨骼位置，任何在 update 前做的钳位都会被冲掉。
+   ★ 要锁的不止 センター——很多编舞 VMD 会用 全ての親/足ＩＫ 做整身平移
+     （实测 Phut hon 的 全ての親 有 32 帧 x∈[0,-27] 的走位，原曲里人走出画面），
+     不锁的话跨模型播放她整个人直接飞出窗口。 */
+function lockDanceRoot() {
+  if (!danceMesh || !danceMesh.skeleton) return;
+  for (const b of danceMesh.skeleton.bones) {
+    const n = b.name;
+    if (n !== '全ての親' && n !== 'センター' && n !== '左足ＩＫ' && n !== '右足ＩＫ'
+        && n !== '左つま先ＩＫ' && n !== '右つま先ＩＫ') continue;
+    if (!homeRoot.has(b)) {
+      homeRoot.set(b, { x: b.position.x, y: b.position.y, z: b.position.z });
+    }
+    const h = homeRoot.get(b);
+    b.position.x = h.x;
+    b.position.z = h.z;
+    const dy = Math.max(-0.03, Math.min(0.03, b.position.y - h.y));
+    b.position.y = h.y + dy;
+  }
+}
+
+/* 动作取景（骨骼包围盒法）：
+   ★ 不能用 autofit() 的"读屏幕像素"法——动作中姿势可能部分出框，读到的剪影偏小
+     → 镜头继续拉近 → 剪影更小，正反馈。实测 Phut hon 时 h 从 0.32 掉到 0.09，
+     镜头直接怼到脸上（画面上只剩刀），看起来像"人被甩出窗口"，其实机位塌了。
+   做法：把整段动作按 24 个时间点采样，取骨骼世界坐标的并集包围盒，
+   一次算出能容纳"最大活动范围"的机位，整段动作期间固定不动（不抖、不追脸）。 */
+function frameMotion(key) {
+  if (!danceMesh || !mixer || !danceAction) return;
+  const bs = danceMesh.skeleton && danceMesh.skeleton.bones;
+  if (!bs || !bs.length) return;
+  const dur = Math.max(0.2, danceAction.getClip().duration);
+  const v = new THREE.Vector3();
+  let minX = 1e9, maxX = -1e9, minY = 1e9, maxY = -1e9;
+  const N = 48;
+  const restY = danceGround.restY;      // 与运行时 groundDance 同源：采样也要做地面吸附，
+  for (let i = 0; i <= N; i++) {        // 否则下蹲帧的低位把包围盒底部撑大 → 镜头整体偏上
+    mixer.setTime(dur * i / N);
+    lockDanceRoot();          // 与渲染循环同一钳位：否则 全ての親 的编舞走位会把包围盒放大几十倍
+    let off = 0;
+    if (restY !== null) {
+      const fy = danceFootY();
+      if (fy !== null) off = Math.max(-0.30, Math.min(0.30, restY - fy));
+    }
+    danceMesh.updateMatrixWorld(true);
+    for (let j = 0; j < bs.length; j++) {
+      bs[j].getWorldPosition(v);
+      if (v.x < minX) minX = v.x; if (v.x > maxX) maxX = v.x;
+      const y = v.y + off;    // 加上吸附偏移，等价于运行时 rig.y = baseY + off 的世界位
+      if (y < minY) minY = y; if (y > maxY) maxY = y;
+    }
+  }
+  mixer.setTime(0);
+  lockDanceRoot();
+  danceMesh.updateMatrixWorld(true);
+  const fov = camera.fov * Math.PI / 180;
+  const M = MARGIN + 0.06;    // 动作余量略大于待机：肢体有速度模糊/裙摆甩动
+  /* 骨骼只到关节中心，皮肤/头发/裙摆/刀鞘会外扩：纵向留 10%，横向留 18%。
+     （原 1.14/1.32 × M+0.10 把包围盒放得过大，横向一约束镜头就退很远，
+       实测 tankouwu 里人物只占窗口高 42%，用户观感"人物被缩小"。
+       收紧后若个别动作仍顶边，靠下面的 idleDist 钳制兜底。） */
+  const h = Math.max(0.05, (maxY - minY) * 1.10);
+  const w = Math.max(0.05, (maxX - minX) * 1.30);
+  const aspect = camera.aspect || 0.63;
+  const dV = (h * M / 2) / Math.tan(fov / 2);
+  const dH = (w * M / 2) / (Math.tan(fov / 2) * aspect);
+  let dist = Math.max(dV, dH, 0.6);
+  /* ★ 保险钳制：动作机位最远不超过待机机位的 1.25 倍。
+     待机取景把人物撑到窗口高 ~80%，动作再怎么张牙舞爪也不该比那小太多。
+     ⚠ 钳制只压纵向余量，横向必须保留 dH（否则挥臂类动作直接贴左右边——
+       实测把 dV/dH 一起钳到 1.20 时，16 个模型里 12 个在 phut_hon 顶右边）。 */
+  if (idleDist > 0) dist = Math.max(dH, Math.min(dist, idleDist * 1.25));
+  const cy = (minY + maxY) / 2;
+  const cx = (minX + maxX) / 2;
+  motionCam = { dist: dist, cy: cy, cx: cx };
+  report('motionfit ' + key + ' h=' + h.toFixed(3) + ' w=' + w.toFixed(3)
+         + ' dist=' + dist.toFixed(3) + ' cy=' + cy.toFixed(3) + ' cx=' + cx.toFixed(3));
+}
+
+/* 姿态包络限幅：VMD 是给"原配模型"调的，跨模型后某些姿势会把四肢甩出
+   原配的活动范围（ IK 删掉后，抬臂过头类姿势也可能把腕骨顶出窗口）。
+   这里在应用完动画后，对所有骨骼做"距根距离不失控"的软限制：
+   手/足末端骨的世界 Y 不高于头顶 1.35 倍身高、不低于脚底 -0.1。
+   做法是直接钳末端效应器（手腕/脚踝）相对上臂/大腿的方向，简单且稳。 */
+const _db_v = new THREE.Vector3();
+function clampDancePose() {
+  if (!danceMesh || !danceMesh.skeleton) return;
+  const H = 1.0;                              // 归一化身高
+  for (const b of danceMesh.skeleton.bones) {
+    const n = b.name;
+    const isHand = (n === '左手首' || n === '右手首');
+    const isFoot = (n === '左足首' || n === '右足首');
+    if (!isHand && !isFoot) continue;
+    b.updateWorldMatrix(true, false);
+    _db_v.setFromMatrixPosition(b.matrixWorld);
+    // 世界坐标 -> rig 局部（holder 平移 -0.5 后，模型 y ∈ [0,1]）
+    const yLocal = _db_v.y;                    // mesh 在 holder 内，未含 holder 平移
+    if (yLocal > H * 1.12) {
+      // 末端举过高：把该骨往父级方向拉回（按超出比例收缩 offset）
+      const over = yLocal - H * 1.12;
+      const p = b.parent;
+      if (!p) continue;
+      p.updateWorldMatrix(true, false);
+      _db_v.setFromMatrixPosition(p.matrixWorld);
+      _db_v.y += over;                         // 目标：末端 Y 压回到限高
+      // 逆变换回 b 的局部
+      _pm.copy(p.matrixWorld).invert();
+      _db_v.applyMatrix4(_pm);
+      b.position.lerp(_db_v, 0.5);
+      b.updateWorldMatrix(false, false);
+    }
+  }
+}
+const _pm = new THREE.Matrix4();
+
+/* 地面吸附：VMD 是按原作者模型的腿长做的，放到别的模型上足ＩＫ会把身体顶离地/压进地。
+   每帧量出双足最低点，把整只模型平移回"脚底贴地"，并限幅 + 平滑（防异常动作拽飞取景）。 */
+let danceGround = { restY: null, off: 0 };
+
+function danceFootY() {
+  if (!danceMesh || !danceMesh.skeleton) return null;
+  let minY = null;
+  for (const b of danceMesh.skeleton.bones) {
+    const n = b.name;
+    if (n !== '左足首' && n !== '右足首' && n !== '左つま先' && n !== '右つま先') continue;
+    b.updateWorldMatrix(true, false);
+    const y = b.matrixWorld.elements[13];
+    minY = (minY === null) ? y : Math.min(minY, y);
+  }
+  return minY;
+}
+
+function groundDance() {
+  if (danceGround.restY === null) return;
+  const y = danceFootY();
+  if (y === null) return;
+  const target = Math.max(-0.30, Math.min(0.30, danceGround.restY - y));
+  danceGround.off += (target - danceGround.off) * 0.25;
+}
+
+async function syncMotion() {
+  try {
+    const j = await (await fetch('/api/motions', { cache: 'no-store' })).json();
+    danceList = j.motions || [];
+    danceMap = {};
+    for (const m of danceList) danceMap[m.key] = m;
+    const want = j.current || 'idle';
+    if (want === 'idle') { if (danceOn || danceKey !== 'idle') stopDance(); }
+    else playDance(want);
+  } catch (e) {
+    report('motionsfetchfail ' + (e && e.message ? e.message : e));
+  }
+}
+setInterval(syncMotion, 2000);
+
+/* ===================== 待机动作 =====================
+   原则：整身绝不漂移、不像幽灵；动作都在局部关节上做小幅度。
+   1) rig 的位置/旋转每帧锁死；
+   2) 头/腰/臀/腿做极小角度的常驻微动（呼吸/扭腰/张望/承重交换）；
+   3) 手臂 = 自然垂放基础姿势（A 方案）+ 每 8~15 秒一次的随机小动作（D 方案：
+      歪头 / 点头 / 挥手），播完自动回到基础姿势；
+   4) 不做会让整身水平漂移的 Y 轴旋转。 */
+const _swayAxis = new THREE.Vector3();
+const _swayQ    = new THREE.Quaternion();
+
+/* ===================== 骨骼"自转"（沿骨长轴扭转） =====================
+   MMD 里 手捩 / 腕捩 就是干这个的：绕骨骼自己的长轴旋转 = 翻掌，手的位置不变。
+   直接写 rotation.x/y/z 做不到这件事（那是在世界轴上甩手臂），
+   所以这里按"骨骼 → 指尖"的世界方向算出长轴，再换算回父级空间做轴角旋转。
+   好处：不依赖具体模型的手臂朝向，6 个模型通用。 */
+const _twAxis = new THREE.Vector3();
+const _twQ    = new THREE.Quaternion();
+const _twPQ   = new THREE.Quaternion();
+function twistBone(key, tipKey, angle) {
+  const b = bones[key], tip = bones[tipKey];
+  if (!b) return;
+  const hm = boneHome[key];
+  b.rotation.set(hm.rx, hm.ry, hm.rz);            // 先回静止，保证轴向上一次不被累计
+  if (!tip || Math.abs(angle) < 1e-4) return;
+  b.updateWorldMatrix(true, false);
+  tip.updateWorldMatrix(true, false);
+  const m = b.matrixWorld.elements, c = tip.matrixWorld.elements;
+  _twAxis.set(c[12] - m[12], c[13] - m[13], c[14] - m[14]);
+  if (_twAxis.lengthSq() < 1e-12) return;
+  _twAxis.normalize();
+  if (b.parent) { b.parent.getWorldQuaternion(_twPQ); _twAxis.applyQuaternion(_twPQ.invert()); }
+  _twQ.setFromAxisAngle(_twAxis, angle);
+  b.quaternion.premultiply(_twQ);
+}
+
+/* 裙摆 / 头发：每条链朝自己的外侧甩，相位带上方位角 → 波绕身一圈传播 */
+function animateSway(t, hipSway, look) {
+  for (const g of swayGroups) {
+    for (const ch of g.chains) {
+      _swayAxis.set(-Math.cos(ch.theta), 0, Math.sin(ch.theta));
+      const L = ch.links.length;
+      for (let i = 0; i < L; i++) {
+        const lk = ch.links[i];
+        const lf = (i + 1) / L;                      // 越往下摆得越大（末端最大）
+        const ph = ch.theta * 1.7 + (g.isHair ? 0 : hipSway * 0.9);
+        let w = g.amp * lf * (
+          0.74 * Math.sin(t * g.omega + ph) +
+          0.26 * Math.sin(t * g.omega * 1.9 + ph * 1.5 + 1.1));   // 二次谐波，避免机械感
+        if (g.isHair) w -= look * 0.30 * lf;         // 头发跟转头的惯性（反向甩）
+        _swayQ.setFromAxisAngle(_swayAxis, w);
+        lk.bone.quaternion.copy(lk.home).multiply(_swayQ);
+      }
+    }
+  }
+}
+
+/* 手指骨骼仍会收集（只用于探针上报模型信息），但待机不再驱动它们 */
+
+/* ===================== 随机小动作（方案 D） =====================
+   状态机：空闲 -> 随机挑一个小动作（歪头/点头/挥手，左右随机）-> 播完回空闲。
+   动作包络 env：前 22% 渐入、后 30% 渐出，中间保持 —— 不会瞬间摆过去再弹回来。 */
+let gesture = null;               // { type, side(+1=左臂/-1=右臂), t0, dur }
+let nextGestureAt = 2.5;          // 开场安静 2.5 秒，然后先冲你打个招呼
+let greeted = false;              // 本次启动/切换模型后是否已经打过招呼
+
+function pickGesture(t) {
+  const types = ['tilt', 'nod', 'wave'];
+  const forced = new URLSearchParams(location.search).get('g');   // 调试：强制指定动作
+  gesture = {
+    type: (forced && types.indexOf(forced) >= 0) ? forced
+        : (!greeted ? 'wave'                     // 第一次动作固定是"Hi"（像在迎你）
+        : types[Math.floor(Math.random() * types.length)]),
+    side: Math.random() < 0.5 ? 1 : -1,
+    t0: t,
+    dur: 0,
+  };
+  if (gesture.type === 'wave') greeted = true;
+  gesture.dur = gesture.type === 'wave' ? 3.4 : (gesture.type === 'tilt' ? 2.4 : 2.2);
+  report('gesture ' + gesture.type + ' side=' + gesture.side);
+}
+
+/* 每帧调用：把当前小动作折算成各关节的"叠加偏移量"（弧度）。
+   返回后由 animateBones 加到基础姿势上，互不干扰。 */
+function gestureOffsets(t) {
+  const o = {
+    headX: 0, headZ: 0, neckY: 0,
+    armX: { L: 0, R: 0 }, armZ: { L: 0, R: 0 },
+    foreX: { L: 0, R: 0 }, foreZ: { L: 0, R: 0 },
+    twist: { L: 0, R: 0 },
+  };
+  if (!gesture) return o;
+  const e = (t - gesture.t0) / gesture.dur;
+  if (e >= 1) {                       // 播完：安排下一个
+    const forced = new URLSearchParams(location.search).get('g');
+    gesture = null;
+    nextGestureAt = t + (forced ? 1.6
+      : GESTURE_EVERY_MIN + Math.random() * (GESTURE_EVERY_MAX - GESTURE_EVERY_MIN));
+    return o;
+  }
+  const env = Math.min(1, Math.min(e / 0.22, (1 - e) / 0.30)) * GESTURE_AMP;
+  const s = gesture.side;
+  if (gesture.type === 'tilt') {      // 歪头：头绕 z 倾斜 + 脖子一点跟随
+    o.headZ = TILT_AMP * env * s;
+    o.neckY = 0.08 * env * s;
+  } else if (gesture.type === 'nod') {   // 点头：x 轴点头两三下
+    o.headX = Math.sin(e * Math.PI * 3) * NOD_AMP * env;
+  } else if (gesture.type === 'wave') {  // 挥手 HI：整臂抬过肩 + 前臂折到头侧 + 摆手
+    /* 轴向（实机截图迭代校准，模型=椛暗式/黄泉等 MMD 标准 PMX）：
+       上臂 local z：左臂 + = 上抬（右臂相反，故乘 s）；
+       前臂 local z：左臂 + = 向头侧折（右臂相反）。 */
+    const k = s > 0 ? 'L' : 'R';
+    const osc = Math.sin(e * Math.PI * WAVE_SWINGS);   // 摆动相位：来回摆 WAVE_SWINGS 下
+    o.armZ[k]  += (WAVE_ARM_LIFT + osc * WAVE_BOB) * env * s;
+    o.foreX[k] += WAVE_ELBOW_FWD * env;
+    o.foreZ[k] += (WAVE_ELBOW + osc * WAVE_BOB * 0.6) * env * s;
+    /* 翻掌：抬臂折肘之后手掌默认是"手背朝前"，要靠手捩骨绕前臂长轴转过来，
+       掌心才对着观众 —— 这是"打招呼"和"随便举个手"的最大区别。
+       摆动也叠在这个轴上：手腕左右翻 = 观众看到的手掌左右挥。 */
+    /* 翻掌必须**乘 s**。曾经以为左右手捩骨长轴自动镜像、同一角度即可通用，
+       实测证明不成立：该模型两只手捩骨的局部轴并非镜像，
+       数值扫描结果 —— 左手掌心朝前的最优角 = -1.40，右手 = +1.40（严格反对称）。
+       所以这里乘 s，摆动项同乘，保证两手摆动方向也是对称的。 */
+    o.twist[k] += (WAVE_WRIST + osc * WAVE_SWING) * env * s;
+    o.headZ += 0.06 * env * s;           // 头也稍微朝手那边歪一点，带点俏皮
+  }
+  return o;
+}
+
+/* ===================== 眼神追随 =====================
+   设计要点（调研自 three-vrm 的 VRMLookAt 与 MMD 社区眼骨方案的共识做法）：
+   1) 死区：光标在窗口中心附近时不追 —— 人不会一直死盯正前方一个点；
+   2) 软饱和：远处光标映射到极限角，近处只用到一部分极限，用指数曲线压缩，
+      避免"光标一动眼球就打满"的突兀感；
+   3) 指数平滑（time constant 0.1s）：眼动快但不是瞬移，瞬移像抽搐；
+   4) 数据保鲜：age > 1s（壳挂了/窗口没了）目标回中位，平滑滑回去而不是硬跳；
+   5) 头部跟随分左右/上下两组增益：眼球负责主体方向，头部补足幅度
+      （窗口小、眼珠上下只有十几像素，纯眼球动看不出来）。
+      两条渲染路径（idle/dance）共用 gazeHeadParts()，避免头感不一致；
+   6) 全部可调：控制台 __xyGaze.on(false) 关闭，__xyGaze.set(yaw,pitch) 手动摆姿势验证。
+   轴向约定与首骨/頭骨一致：X=上下(pitch) Y=左右(yaw)，直接复用 set() 的偏移叠加。 */
+const gaze = {
+  yaw: 0, pitch: 0,          // 当前角度（平滑后，弧度）
+  tYaw: 0, tPitch: 0,        // 目标角度
+  enabled: true,             // 调试开关（__xyGaze.on），与 mode 是两回事
+  mode: 'always',            // 后端下发的运行模式：always / idle / off（右键菜单切）
+  manual: null,              // 手动覆盖 {yaw, pitch}，用于调试
+  hasBones: false,           // 左右目是否都匹配上了
+  lastErr: 0,
+
+  /* 无论 mode 是什么都要轮询：mode 本身也是从这里回来的，
+     否则一旦切到 off 就再也收不到"切回 always"的通知。 */
+  poll: async function () {
+    let j;
+    try {
+      const r = await fetch('/api/gaze', { cache: 'no-store' });
+      j = await r.json();
+    } catch (e) { return; }               // 后端瞬断：保持当前目标，下次轮询自愈
+    if (!j || !j.ok) return;
+    if (j.poke) poke.feed(j.poke, j.click_style);   // 点击反馈：顺路搭这趟轮询，不单开通道
+    if (j.mode && j.mode !== this.mode) {  // 模式变了（壳右键菜单）
+      this.mode = j.mode;
+      if (this.mode !== 'always') { this.tYaw = 0; this.tPitch = 0; }
+      report('pmxgaze mode=' + this.mode);
+    }
+    if (this.mode === 'off' || !this.enabled || !this.hasBones) {
+      this.tYaw = 0; this.tPitch = 0;
+      return;
+    }
+    if (j.age < 0 || j.age > GAZE_MAX_AGE || !j.rect) {
+      this.tYaw = 0; this.tPitch = 0;     // 数据过期 → 回中位
+      return;
+    }
+    const l = j.rect[0], t = j.rect[1], rr = j.rect[2], b = j.rect[3];
+    const px = j.x - (l + rr) / 2, py = j.y - (t + b) / 2;   // 光标相对角色中心的像素偏移
+    const len = Math.hypot(px, py);
+    if (len < GAZE_DEAD_PX) { this.tYaw = 0; this.tPitch = 0; return; }   // 死区（像素）内不追
+    /* 方向单位向量 × 连续幅度曲线。
+       eff = 超出死区的距离 / 参考半径，从 0 连续长起 —— 旧版越过死区直接跳到 11°，
+       正是"鼠标动一点瞳孔就飞出去"的元凶；指数曲线从 0 平滑长起、越远越趋近极限但永不突破。
+       ★ 2026-10-19 二次调整：atan 起步太钝（走 300px 才到 40%），换 1-exp 起步更跟手。 */
+    const ux = px / len, uy = py / len;
+    const eff = (len - GAZE_DEAD_PX) / GAZE_REF_PX;
+    const s = 1 - Math.exp(-eff * 1.2);                     // 0 → 1 渐近
+    this.tYaw   = ux * s * GAZE_YAW_MAX;
+    this.tPitch = uy * s * GAZE_PITCH_MAX;
+  },
+
+  /* 每帧调用：指数平滑逼近目标。dt 用帧间隔，掉帧时不会"跳变" */
+  update: function (dt) {
+    const a = 1 - Math.exp(-dt / GAZE_TAU);
+    this.yaw   += (this.tYaw   - this.yaw)   * a;
+    this.pitch += (this.tPitch - this.pitch) * a;
+  },
+
+  /* 供 animateBones / applyGazeEyes 取叠加偏移。返回 null = 本帧不驱动眼神。
+     mode 三档就在这里统一裁决（两个调用方都从这里取，不会漏判）：
+       off    = 永不驱动
+       idle   = 只在待机（内置微动作）时驱动；动作播放时让位给 VMD 自带的眼骨轨道
+       always = 动作模式下也覆盖眼骨 */
+  offsets: function () {
+    if (!this.enabled || !this.hasBones || this.mode === 'off') return null;
+    if (this.mode === 'idle' && danceOn) return null;
+    if (this.manual) return { yaw: this.manual.yaw, pitch: this.manual.pitch };
+    return { yaw: this.yaw, pitch: this.pitch };
+  },
+
+  /* 调试接口（对齐项目 __xyTwist / __xyMouthOverride 惯例） */
+  dbg: {
+    on: (v) => { gaze.enabled = v !== false; return gaze.enabled; },
+    set: (yaw, pitch) => { gaze.manual = { yaw: yaw || 0, pitch: pitch || 0 }; },
+    clear: () => { gaze.manual = null; },
+    parts: () => gazeHeadParts(),     // 头部跟随的实际分量（左右/上下各自多少）
+  },
+};
+window.__xyGaze = gaze.dbg;
+
+/* ===================== 点击反馈（戳一下） =====================
+   ★ 为什么驱动放在 loop 末尾、不用 applyFace 里那套：
+     页面默认在播 VMD，mixer 每帧把骨骼重写成绝对值；这里的"挤压/仰头"必须在
+     mixer 之后做增量，否则会被下一帧的轨道抹掉（眼神踩过同一个坑，见 applyGazeEyes）。
+   ★ 为什么用 rig.scale 而不是 rig.position：
+     位移会把脚一起搬走 —— 那是"整块积木被推了一下"，正是用户反馈的僵硬感。
+     rig 原点在模型脚底附近，绕自身缩放 = 头顶下沉、脚不动，天然"贴地锚定"。
+   ★ 缩放必须"绝对值写"而不是累乘：
+     idle 分支每帧 rig.scale.setScalar(呼吸值) 会重置，但 **dance 分支（VMD）不写 scale**
+     —— 累乘会在半秒内把模型缩没。所以触发瞬间抓一次基准，之后按 基准 × 系数 写。
+   ★ seq 首次只记基线不播：刷新页面 / 重开窗口时后端的 seq 早已 >0，
+     不该一进来就抖一下。 */
+
+/* 反应强度曲线：rise 内用 easeOutBack 快速起并过冲，之后指数回落。
+   over = 过冲比例（0.06 = 峰值冲到 1.06 再回来）。
+   ★ 为什么不用纯指数：指数是单调下滑，看起来像"被推了一下慢慢停"，没有"弹"的收尾。
+     过冲那一下正是桌宠 Q 弹感的来源；但 over 不能太大，否则像橡皮玩具（见 POKE_STYLES）。 */
+function pokeCurve(dt, rise, tau, over) {
+  if (!(dt > 0)) return 0;
+  if (dt < rise) {
+    const c = 1.70158 * (over / 0.10);   // over=0.10 时即标准 easeOutBack
+    const u = dt / rise - 1;
+    return 1 + (c + 1) * u * u * u + c * u * u;
+  }
+  return Math.exp(-(dt - rise) / tau);
+}
+
+/* 表情组内最大权重。<0 / 空组返回 null，测试才能区分"模型没这个表情"与"权重为 0"。
+   （用户实测反馈"没有表情变化"的直接原因：旧版只驱动 びっくり 一个表情，
+    它只动 422 个顶点、平均位移 0.020，是眨眼表情的 1/8 —— 拉满也看不出来。） */
+function faceMax(inf, grp) {
+  if (!inf || !grp.length) return null;
+  let m = 0;
+  for (const e of grp) if (inf[e[0]] > m) m = inf[e[0]];
+  return +m.toFixed(3);
+}
+
+const poke = {
+  seq: -1,          // 已消费的 poke seq（-1 = 还没拿到基线）
+  t0: -99,          // 本次反应起点（页面时钟，秒）
+  lastAt: -99,      // 上次反应起点（连击判定）
+  annoyed: false,   // true = 嫌弃（连戳），false = 受惊
+  active: false,    // 上一帧是否写过值（收尾清零用，避免每帧白写）
+  part: 'body',     // 'head' | 'body' —— 点脸和点身上反应不同
+  style: 'soft',    // 'soft' | 'vivid' —— 后端 data/poke_style.txt，右键可切
+  bx: 1, by: 1, bz: 1,   // 挤压基准（触发瞬间的 rig.scale，含当时的呼吸量）
+  lastInj: null,         // 上一帧实际注入量（调试 / 自测用）
+  peak: null,            // 本次反应的最大注入量（自测判幅度用，采样错过峰值也不怕）
+  hold: null,            // {grp, w} = 静态挂住表情（调试预览，不影响正常流程）
+
+  cfg: function () { return POKE_STYLES[this.style] || POKE_STYLES.soft; },
+  k:   function () { return POKE_PART[this.part] || POKE_PART.body; },
+
+  /* 轮询里喂进来：j.poke = {seq, age, x, y}，j.click_style = 'soft'|'vivid' */
+  feed: function (p, style) {
+    if (style && POKE_STYLES[style]) this.style = style;
+    if (!p || typeof p.seq !== 'number') return;
+    if (p.seq === this.seq) return;
+    const first = this.seq < 0;
+    this.seq = p.seq;
+    if (first) return;                       // 基线，不播
+    const now = (performance.now() - t0) / 1000;
+    if (now - this.lastAt < POKE_MIN_GAP) return;   // 手抖连点：合并成一次
+    this.annoyed = (now - this.lastAt) * 1000 < POKE_CHAIN_MS;
+    this.lastAt = now;
+    this.t0 = now;
+    this.active = true;
+    this.part = this._pickPart(p.x, p.y);
+    this._snapScale();
+    this._resetPeak();
+    report('pmxpoke ' + (this.annoyed ? 'annoyed' : 'surprised') +
+           ' part=' + this.part + ' style=' + this.style +
+           ((pokeFace.surprise.length || pokeFace.annoyed.length) ? '' : ' no-morph'));
+  },
+
+  /* 用射线判定点到了哪。
+     ★ 为什么在页面做而不是后端：页面有相机和骨骼，能打到真实网格上；
+       后端只能按窗口高度猜，而 16 只模型头身比并不一致。
+     打空（点在贴图透明区、模型外）退回"按窗口高度估"：autofit 把她顶到窗口上沿，
+     头部大致落在上 30%，这个比例对所有模型都成立。 */
+  _pickPart: function (nx, ny) {
+    if (!rig || typeof nx !== 'number' || typeof ny !== 'number') return 'body';
+    try {
+      if (!bones.head) return ny < 0.30 ? 'head' : 'body';
+      camera.updateMatrixWorld();              // tick 早于 render，矩阵可能还是上一帧的
+      const ray = new THREE.Raycaster();
+      ray.setFromCamera(new THREE.Vector2(nx * 2 - 1, -(ny * 2 - 1)), camera);
+      const hits = ray.intersectObject(rig, true);
+      if (hits.length) {
+        const hv = new THREE.Vector3(), nv = new THREE.Vector3();
+        bones.head.getWorldPosition(hv);
+        if (bones.neck) bones.neck.getWorldPosition(nv); else nv.copy(hv).y -= 0.5;
+        const hh = Math.max(0.01, hv.y - nv.y);   // 头骨到颈骨的高度 = 头的量级
+        /* 用头骨位置减去 30% 头高当分界：头骨在颅底，光用 >= hv.y 会把下巴判成身体 */
+        return hits[0].point.y > hv.y - 0.30 * hh ? 'head' : 'body';
+      }
+    } catch (e) {
+      report('pmxpoke pickerr ' + (e && e.message ? e.message : e));
+    }
+    return ny < 0.30 ? 'head' : 'body';
+  },
+
+  _snapScale: function () {
+    if (!rig) return;
+    this.bx = rig.scale.x || 1;
+    this.by = rig.scale.y || 1;
+    this.bz = rig.scale.z || 1;
+  },
+
+  _resetPeak: function () {
+    this.peak = { squash: 0, headX: 0, headZ: 0, neckX: 0, spineX: 0, face: 0 };
+  },
+
+  /* 每帧调用（必须在 mixer / animateBones / rig 归位之后、renderer.render 之前） */
+  tick: function (t) {
+    const cfg = this.cfg();
+    const dt = t - this.t0;
+    /* 静态预览：只挂表情、不衰减也不动骨骼（调观感 / 截图对照用） */
+    if (this.hold) { this._face(this.hold.w, this.hold.grp); return; }
+    if (!this.active || dt < 0 || dt > cfg.dur) {
+      if (this.active) { this.active = false; this._write(0, 0, 0, cfg, null); }
+      return;
+    }
+    const k = this.k();
+    /* 三级错峰：同一个初始冲击，三个部位各自延迟 + 各自衰减常数。
+       这是"不木偶"的关键 —— 同时起同时停看起来就是提线木偶。 */
+    const eBody = pokeCurve(dt, cfg.rise, cfg.tau, cfg.over) * k.squash;
+    const eNeck = pokeCurve(dt - POKE_D_NECK, cfg.rise, cfg.tau * POKE_NECK_TAU, cfg.over) * k.neck;
+    const eHead = pokeCurve(dt - POKE_D_HEAD, cfg.rise, cfg.tau * POKE_HEAD_TAU, cfg.over) * k.head;
+    /* 表情不参与错峰：被戳到的那一瞬间脸就该变，等 80ms 才"惊讶"像慢半拍。
+       也不乘部位系数 —— 点身体时表情同样是完整的一惊。 */
+    const eFace = pokeCurve(dt, cfg.rise, cfg.tau * POKE_FACE_TAU, cfg.over);
+    this._write(eBody, eNeck, eHead, cfg, k, eFace);
+  },
+
+  /* eBody / eNeck / eHead = 各部位强度（0 表示收尾清零）；eFace = 表情强度（不延迟） */
+  _write: function (eBody, eNeck, eHead, cfg, k, eFace) {
+    const kk = k || POKE_PART.body;
+    /* 记下本帧实际注入量：测试直接断言它，不用去读骨骼旋转
+       （骨骼上还叠着待机/ VMD 的量，读出来噪声比信号大） */
+    this.lastInj = {
+      squash: cfg.sy * eBody,
+      headX: cfg.headX * eHead,
+      headZ: cfg.headZ * eHead * kk.headZ,
+      neckX: cfg.neckX * eNeck,
+      spineX: kk.spine ? cfg.spineX * eBody * kk.spine : 0,
+    };
+    /* 记录本次反应的最大注入量。自测在 SwiftShader 下 CDP 往返抖动可达几十毫秒，
+       按时刻采样经常错过峰值 —— 判"幅度够不够大"要看这条，不是采样点。 */
+    if (this.peak) {
+      for (const key in this.lastInj) {
+        const v = this.lastInj[key];
+        if (typeof v === 'number' && v > (this.peak[key] || 0)) this.peak[key] = v;
+      }
+    }
+    /* ---- 表情：受惊 / 嫌弃二选一（组合表情，见 POKE_FACE_SPEC）---- */
+    this._face((eFace == null) ? Math.max(eHead, eBody) : eFace,
+               this.annoyed ? 'annoyed' : 'surprise');
+    /* ---- 躯干：等体积挤压（竖直压扁、横向膨胀），脚底不动 ---- */
+    if (rig) {
+      const sy = cfg.sy * eBody;
+      const sx = cfg.sx * eBody;
+      rig.scale.set(this.bx * (1 + sx), this.by * (1 - sy), this.bz * (1 + sx));
+    }
+    /* ---- 脊柱：点身体时含胸缩一下。点脸不做，否则像在鞠躬 ---- */
+    const sp = bones.spine;
+    if (sp && kk.spine) sp.rotation.x += cfg.spineX * eBody * kk.spine;
+    /* ---- 颈：给头让路，幅度小、稍晚 ---- */
+    const nk = bones.neck;
+    if (nk) nk.rotation.x -= cfg.neckX * eNeck;
+    /* ---- 头：后仰 + 轻微歪头躲 ---- */
+    const hd = bones.head;
+    if (hd) {
+      hd.rotation.x -= cfg.headX * eHead;                 // x- = 仰头（实测 x+ 是低头）
+      hd.rotation.z += cfg.headZ * eHead * kk.headZ;      // 歪头 = "别戳我"的闪避感
+    }
+  },
+
+  /* 只写表情，不碰骨骼 —— 点击反馈与静态预览（dbg.hold）共用。
+     emo = 0~1 的强度，grp = 'surprise' | 'annoyed'。
+     ★ 静态预览存在的理由：表情"有没有效果"只能靠眼睛判断，而瞬时动画在无头截图里
+       很难卡在峰值上（SwiftShader 下 CDP 往返就有几十毫秒抖动）。 */
+  _face: function (emo, grp) {
+    const inf = morphMesh && morphMesh.morphTargetInfluences;
+    if (!inf) return;
+    const on = pokeFace[grp] || [];
+    const off = pokeFace[grp === 'annoyed' ? 'surprise' : 'annoyed'] || [];
+    for (const e of off) inf[e[0]] = 0;
+    let peak = 0;
+    for (const e of on) {
+      const v = Math.min(1, emo * e[1] * 1.15);
+      inf[e[0]] = v;
+      if (v > peak) peak = v;
+    }
+    /* 说话时元音让位：受惊张嘴的那半秒不该还在念字（applyFace 刚写完，这里按比例压） */
+    if (emo > 0.01) {
+      for (const v of mVowels) {
+        if (v >= 0) inf[v] *= (1 - 0.85 * Math.min(1, emo));
+      }
+    }
+    if (emo > 0 && mSmile >= 0) {
+      /* 用 min 封顶而不是相乘：动作分支里 applyFace 不写笑肌（交给 VMD），
+         乘法会在几帧内累积把动作自己的表情压死，且 poke 结束后也回不来。 */
+      const cap = POKE_SMILE + (1 - POKE_SMILE) * (1 - emo);
+      if (inf[mSmile] > cap) inf[mSmile] = cap;
+    }
+    if (this.lastInj) {
+      this.lastInj.face = +peak.toFixed(3);
+      this.lastInj.faceGroup = grp;
+    }
+  },
+
+  /* 调试：不发点击也能看反应。
+     用法（控制台）：__xyPoke.hit()                    受惊 + 点身体
+                     __xyPoke.hit(false, 'head')      受惊 + 点脸
+                     __xyPoke.hit(false, 'head', 'vivid')
+                     __xyPoke.hit(true)               嫌弃
+                     __xyPoke.hold('surprise')        静态挂住表情（看效果 / 截图）
+                     __xyPoke.hold('annoyed', 0.8)    静态挂住，指定强度
+                     __xyPoke.hold(null)              清掉
+     ★ 方法里一律引用闭包 poke，不要用 this —— window.__xyPoke 指向的是 dbg 本身，
+       写成 this.xxx 会改到 dbg 上，读出来的状态全是错的（踩过）。 */
+  dbg: {
+    hit: function (annoyed, part, style) {
+      poke.annoyed = !!annoyed;
+      if (part === 'head' || part === 'body') poke.part = part;
+      if (style && POKE_STYLES[style]) poke.style = style;
+      poke.lastAt = -99;
+      poke.t0 = (performance.now() - t0) / 1000;
+      poke.active = true;
+      poke._snapScale();
+      poke._resetPeak();
+      report('pmxpoke manual ' + (poke.annoyed ? 'annoyed' : 'surprised') +
+             ' part=' + poke.part + ' style=' + poke.style);
+      return poke.t0;
+    },
+    /* 静态挂住表情（不衰减、不动骨骼）：看观感 / 无头截图对照用 */
+    hold: function (grp, w) {
+      if (!grp) { poke.hold = null; poke._face(0, 'surprise'); poke._face(0, 'annoyed'); return 'off'; }
+      if (grp !== 'surprise' && grp !== 'annoyed') return 'bad-group';
+      poke.hold = { grp: grp, w: (w == null ? 1 : w) };
+      return 'on';
+    },
+    state: function () {
+      const cfg = poke.cfg();
+      const dt = (performance.now() - t0) / 1000 - poke.t0;
+      const inf = morphMesh && morphMesh.morphTargetInfluences;
+      const sc = rig ? rig.scale : null;
+      const nb = bones.neck, hb = bones.head;
+      return { seq: poke.seq, active: poke.active, annoyed: poke.annoyed,
+               part: poke.part, style: poke.style,
+               dt: +dt.toFixed(3),
+               e: poke.active ? +pokeCurve(dt, cfg.rise, cfg.tau, cfg.over).toFixed(3) : 0,
+               /* eHead 是纯曲线（不含部位系数），专门用来验"头比躯干晚起"——
+                  dt < POKE_D_HEAD 时应恒为 0，这是分级延迟的干净判据 */
+               eHead: poke.active
+                 ? +pokeCurve(dt - POKE_D_HEAD, cfg.rise, cfg.tau * POKE_HEAD_TAU, cfg.over).toFixed(3)
+                 : 0,
+               /* 挤压：sy 应小于 by、sx 应大于 bx（竖直压扁 + 横向膨胀） */
+               sx: sc ? +sc.x.toFixed(4) : null,
+               sy: sc ? +sc.y.toFixed(4) : null,
+               bx: +poke.bx.toFixed(4), by: +poke.by.toFixed(4),
+               /* 位移必须恒为 0 —— 这是"脚不动"的判据（旧版就是错在这里） */
+               posY: rig ? +rig.position.y.toFixed(4) : null,
+               posZ: rig ? +rig.position.z.toFixed(4) : null,
+               spineX: bones.spine ? +bones.spine.rotation.x.toFixed(4) : null,
+               neckX: nb ? +nb.rotation.x.toFixed(4) : null,
+               headX: hb ? +hb.rotation.x.toFixed(4) : null,
+               headZ: hb ? +hb.rotation.z.toFixed(4) : null,
+               /* 本帧实际注入量：断言部位差异 / 手感档差异用这个，不用读骨骼 */
+               inj: poke.lastInj,
+               peak: poke.peak,
+               /* 表情：surW / jitW 取组内最大权重（0 = 组内表情没被驱动） */
+               surW: faceMax(inf, pokeFace.surprise),
+               jitW: faceMax(inf, pokeFace.annoyed),
+               faceN: [pokeFace.surprise.length, pokeFace.annoyed.length] };
+    },
+    names: function () {
+      const d = (morphMesh && morphMesh.morphTargetDictionary) || {};
+      const inv = {};
+      for (const k in d) inv[d[k]] = k;
+      const nm = (grp) => grp.map(e => (inv[e[0]] || '?') + ':' + e[1]).join(',');
+      return { sur: nm(pokeFace.surprise), jit: nm(pokeFace.annoyed),
+               count: Object.keys(d).length };
+    },
+  },
+};
+window.__xyPoke = poke.dbg;
+
+/* ===================== 活动反应（P0 屏幕感知的表情出口） =====================
+   后端每轮感知把报错/成功写进 signal_seq；这里 2s 轮询 /api/context/activity，
+   序号变了就播一小段独立表情（error=担心一惊 / success=高兴）。
+   设计约束（都对齐 poke 的既有约定）：
+   · applyFace 每帧会覆盖笑肌/眨眼 → 表情必须在 render 前每帧写，走自己的曲线；
+   · poke 活跃时让位（戳一下是用户直接交互，优先级更高），本轮跳过；
+   · 旧后端没有这个端点（404）→ 静默停用轮询，不刷错误日志；
+   · 首次拿到 seq 只对表不播，避免页面刚加载把历史反应重放一遍。
+   调试口（控制台）：__xyActivity.fire('error') / .fire('success') / 直接看对象状态。 */
+const ACTIVITY_DUR   = 2.6;    // 表情总时长（秒）
+const ACTIVITY_RISE  = 0.35;   // 快起段
+const ACTIVITY_TAU   = 0.9;    // 指数收尾常数（慢收，避免"抽搐式"消失）
+const ACTIVITY_POLL_MS = 2000;
+const activity = {
+  seq: -1,                     // 已消费的 signal_seq（-1 = 尚未对表）
+  enabled: true,               // 404 后置 false，轮询自停
+  active: false, t0: 0, grp: null,
+  lastSignal: 'none',          // 最近一次的反应类型（调试看）
+
+  fire: function (grp) {
+    if (!morphMesh || poke.active) return;
+    if (!activityFace[grp] || !activityFace[grp].length) return;
+    this.grp = grp; this.active = true;
+    /* 与 loop 的 t 同基准：t = (performance.now() - 页面t0)/1000（poke 同口径） */
+    this.t0 = (performance.now() - t0) / 1000;
+  },
+
+  /* 每帧调用（loop 里 poke.tick 之后）：快起慢收的小表情 */
+  tick: function (tNow) {
+    if (!this.active) return;
+    const dt = tNow - this.t0;
+    if (dt < 0 || dt > ACTIVITY_DUR) {
+      this.active = false;
+      if (this.grp) this._face(0, this.grp);   // 收尾清零
+      this.grp = null;
+      return;
+    }
+    const emo = dt < ACTIVITY_RISE
+      ? dt / ACTIVITY_RISE
+      : Math.exp(-(dt - ACTIVITY_RISE) / ACTIVITY_TAU);
+    this._face(Math.min(1, emo), this.grp);
+  },
+
+  /* 只写表情不碰骨骼（同 poke._face 的定位）；清零时两组都清，防残留 */
+  _face: function (emo, grp) {
+    const inf = morphMesh && morphMesh.morphTargetInfluences;
+    if (!inf) return;
+    for (const g in activityFace) {
+      if (g === grp && emo > 0) continue;
+      for (const e of activityFace[g]) inf[e[0]] = 0;
+    }
+    for (const e of (activityFace[grp] || [])) {
+      inf[e[0]] = Math.min(1, emo * e[1]);
+    }
+    if (emo > 0.01) {          // 说话口型让位（受惊张嘴那半秒不该还在念字）
+      for (const v of mVowels) {
+        if (v >= 0) inf[v] *= (1 - 0.85 * Math.min(1, emo));
+      }
+    }
+  },
+};
+window.__xyActivity = activity;
+
+function pollActivity() {
+  if (!activity.enabled) return;
+  fetch('/api/context/activity', { cache: 'no-store' }).then(function (r) {
+    if (r.status === 404) { activity.enabled = false; return null; }
+    return r.json();
+  }).then(function (j) {
+    if (!j || !j.enabled) return;
+    if (activity.seq < 0) { activity.seq = j.signal_seq; return; }
+    if (j.signal_seq !== activity.seq) {
+      activity.seq = j.signal_seq;
+      activity.lastSignal = j.signal || 'none';
+      if (j.signal === 'error' || j.signal === 'success') activity.fire(j.signal);
+    }
+  }).catch(function () {});
+}
+setInterval(pollActivity, ACTIVITY_POLL_MS);
+
+/* ===================== 大脑真状态（P3 DSH 式呈现） =====================
+   后端在 brain_chat 的生命周期里推进 BRAIN_STATE（thinking→idle/error），
+   这里 2s 轮询 /api/brain/state，thinking 时气泡位弹出"她在想…"三点药丸，
+   error 时短暂显示"刚才走神了"。气泡在显示时药丸自动下移 58px 避让。
+   失败静默：状态呈现是旁路功能，绝不影响主对话链路。 */
+const thinkEl = document.getElementById('think');
+let brainShown = false;
+function pollBrain() {
+  fetch('/api/brain/state', { cache: 'no-store' }).then(function (r) {
+    return r.ok ? r.json() : null;
+  }).then(function (j) {
+    if (!j || !j.ok) return;
+    const bubbleEl = document.getElementById('bubble');
+    thinkEl.style.top = (bubbleEl && bubbleEl.classList.contains('show')) ? '72px' : '14px';
+    const want = (j.state === 'thinking' || j.state === 'error');
+    if (j.state === 'thinking') {
+      thinkEl.innerHTML = '她在想<span class="dot"></span><span class="dot"></span><span class="dot"></span>';
+    } else if (j.state === 'error') {
+      /* 只展示一个轮询周期，下一轮 idle 自然消失 */
+      thinkEl.innerHTML = '刚才走神了…';
+    }
+    if (want !== brainShown) {
+      brainShown = want;
+      thinkEl.classList.toggle('show', want);
+    }
+  }).catch(function () {});
+}
+setInterval(pollBrain, 2000);
+
+/* 150ms 轮询后端。fetch 失败静默 —— 眼神是旁路功能，绝不能影响主对话链路 */
+setInterval(function () { gaze.poll(); }, GAZE_POLL_MS);
+
+/* 眼骨驱动（抽成独立函数：动作模式下 mixer 写完全部骨骼后也要叠一层，
+   所以 loop 的两个分支都会调它 —— 眼神永远在线，与动作/待机无关）。
+   返回 gaze 偏移量（null = 本帧不驱动），供调用方叠加头部微跟随。
+   ★ 符号：rotation.y+ = 看向画面右、rotation.x+ = 看向画面下（2026-10-19 用户实测定档）。
+     早前那版取负号，结果"鼠标向右、眼球向左"，已翻正。
+   ★ EYE_YAW_MIRROR：左右目骨 Y 轴是否互为反向。实测同号=双眼同向（该模型导出时已镜像），
+     默认 false；若换的模型出现"斗鸡眼"，改成 true 即可。 */
+function applyGazeEyes() {
+  const gz = gaze.offsets();
+  if (!gz) return null;
+  const gy = gz.yaw, gp = gz.pitch;
+  setBone('eyeL', gp, gy, 0);
+  setBone('eyeR', gp, gy * (EYE_YAW_MIRROR ? -1 : 1), 0);
+  return gz;
+}
+
+/* 头部分跟随量：把眼神角度拆到 首骨/頭骨 两节上。
+   dance 与 idle 两条路径共用同一套算式 —— 不然两条路各自算，头感会不一致
+   （上一版就是 dance 只叠 0.75 倍、pitch 又只有 9°，结果上下基本没动）。
+   返回 null = 本帧不驱动（与 gaze.offsets 的裁决完全一致）。 */
+function gazeHeadParts() {
+  const gz = gaze.offsets();
+  if (!gz) return null;
+  return {
+    neckY: gz.yaw   * GAZE_HEAD_YAW   * 0.45,
+    headY: gz.yaw   * GAZE_HEAD_YAW   * 0.55,
+    neckX: gz.pitch * GAZE_HEAD_PITCH * 0.25,
+    headX: gz.pitch * GAZE_HEAD_PITCH * 0.75,
+  };
+}
+
+/* 动作模式下的头部跟随。
+   mixer 每帧把 VMD 轨道重写成绝对值，这里在其之后做 += 增量，
+   所以动作原有的头部表演仍然保留，只是整体朝光标再偏一点 —— 不会把动作抹平。 */
+function applyGazeHead(scale) {
+  const hp = gazeHeadParts();
+  if (!hp) return;
+  const k = (scale === undefined ? 1 : scale);
+  const nk = bones.neck, hd = bones.head;
+  if (nk) { nk.rotation.y += hp.neckY * k; nk.rotation.x += hp.neckX * k; }
+  if (hd) { hd.rotation.y += hp.headY * k; hd.rotation.x += hp.headX * k; }
+}
+
+function animateBones(t) {
+  if (!bones || !Object.keys(bones).length) return;
+  const br   = Math.sin(t * 1.4);          // 呼吸
+  const look = Math.sin(t * 0.35);         // 头部左右看
+  const wgt  = Math.sin(t * 0.45);         // 腿部承重交换
+
+  // 呼吸（缩放中心在 rig 原点，不改变位置）
+  // 整体缩放压到几乎看不见，"活着"的感觉交给胸腔起伏和裙摆，避免整个人一胀一缩
+  rig.scale.setScalar(1 + br * BREATH_SCALE);
+
+  const set = (k, x, y, z) => {
+    const b = bones[k]; if (!b) return;
+    const hm = boneHome[k];
+    b.rotation.set(hm.rx + x, hm.ry + y, hm.rz + z);
+  };
+  const lock = (k) => {
+    const b = bones[k]; if (!b) return;
+    const hm = boneHome[k];
+    if (hm) b.rotation.set(hm.rx, hm.ry, hm.rz);
+  };
+
+  /* ---- 臀部左右扭腰（用户要求）----
+     扭腰 = 髋部绕 Y 轴左右转，上半身反向补偿，形成自然的 S 型摆动。
+     关键点：センター（hip）必须锁死——它一动整个人就平移，那就是"漂移"了。
+     所以：下半身(臀) 左右扭 → 上半身 反向扭 → 头再补一点，脚不动。 */
+  const sway = Math.sin(t * 0.55);              // 扭腰主频（比摆动慢，更慵懒）
+  set('lowerBody', 0, sway * 0.10, 0);          // 臀部左右摆 5.7°
+  set('spine', br * 0.010, -sway * 0.075, 0);   // 上身反向补偿；x 上的一点起伏 = 呼吸扩胸
+  set('chest', br * 0.016, -sway * 0.045, 0);
+  lock('hips');                                 // センター 锁死 = 脚不会飘
+
+  // 到点了就随机来一个小动作（歪头 / 点头 / 挥手）
+  if (!gesture && t >= nextGestureAt) pickGesture(t);
+  const g = gestureOffsets(t);
+  const hp = gazeHeadParts();          // 眼神的头部跟随（左右/上下分别加权）
+  const hNy = hp ? hp.neckY : 0, hHy = hp ? hp.headY : 0;
+  const hNx = hp ? hp.neckX : 0, hHx = hp ? hp.headX : 0;
+
+  // 头：左右张望（在扭腰基础上再补一点，显得活泼）+ 极轻微歪头 + 小动作叠加
+  // 眼神的头部跟随：眼是主体、头跟着带（GAZE_HEAD_YAW/PITCH），
+  // 不然纯眼球转动在 560px 的小窗口里几乎看不出来。
+  // 左右分摊到 首/頭 两节（45/55），上下主要给頭骨（25/75）—— 点头比扭头更明显。
+  // ★ 只有 idle 分支走这里；dance 模式由 applyGazeHead 叠加（见 loop）。
+  set('neck', hNx, look * 0.11 + g.neckY + hNy, 0);
+  set('head', g.headX + hHx, hHy,
+      Math.sin(t * 0.27) * 0.022 + g.headZ);
+
+  /* ---- 手臂（方案 A：自然垂放）----
+     基础姿势 = A-pose 下压 ARM_DROP(~31°) + 略向前摆(ARM_FWD) + 肘微弯(ELBOW_BEND)，
+     手落在大腿前侧，看起来是"自然站着"。小动作（挥手）以叠加偏移的方式
+     加在这之上，动作结束自动回到基础姿势 —— 两层互不干扰。 */
+  set('armL', ARM_FWD + g.armX.L, 0, -ARM_DROP + g.armZ.L);
+  set('armR', ARM_FWD + g.armX.R, 0,  ARM_DROP + g.armZ.R);
+  set('foreArmL', ELBOW_BEND + g.foreX.L, 0, g.foreZ.L);
+  set('foreArmR', ELBOW_BEND + g.foreX.R, 0, g.foreZ.R);
+
+  /* 手腕翻掌（绕前臂长轴扭转）。window.__xyTwist 仅供调试：写 {L:1.2} 可实时试角度 */
+  const tw = window.__xyTwist || {};
+  twistBone('twistL', 'tipL', g.twist.L + (tw.L || 0));
+  twistBone('twistR', 'tipR', g.twist.R + (tw.R || 0));
+
+  // 腿：承重随扭腰左右交换（只做前后，不做左右张，避免脚飘）
+  set('legL', wgt * 0.035, 0, 0);
+  set('legR', -wgt * 0.035, 0, 0);
+  lock('shinL'); lock('shinR');
+
+  /* ---- 裙摆 / 头发 / 脖饰：绕身传播的行进波 ---- */
+  animateSway(t, sway, look);
+
+  applyFace(t, true);
+}
+
+/* ---- 面部：表情 / 眨眼 / 口型 ----
+   full=true  = 内置待机模式：微笑也由这里给（常驻温和微笑 + 呼吸起伏）；
+   full=false = VMD 动作模式：微笑等表情交给动作自带的 morph 轨道，
+                这里只保证眨眼与"说话时嘴要动"，否则要么面瘫、要么嘴不动。 */
+function applyFace(t, full) {
+  if (!morphMesh || !morphMesh.morphTargetInfluences) return;
+  const inf = morphMesh.morphTargetInfluences;
+  if (full && mSmile >= 0) {
+    inf[mSmile] = SMILE_BASE + Math.sin(t * 0.5) * 0.10;
+  }
+  if (mBlink >= 0) {
+    const cyc = t % BLINK_EVERY;
+    inf[mBlink] = (cyc < 0.13) ? (1 - cyc / 0.13) : 0;
+  }
+  if (full && mWink >= 0) inf[mWink] = 0;
+
+  /* ---- 口型：五元音权重 -> あいうえお ----
+     引擎已经做过时间对齐、交叉淡化和音量门控，这里只做放大与钳制。
+     window.__xyMouthOverride 仅供调试：写 {a,i,u,e,o} 可手动摆口型（不发语音也能验） */
+  const mo = window.__xyMouthOverride;
+  if (mo || (window.__xyLip && mVowels[0] >= 0)) {
+    const w = mo || window.__xyLip.weights;
+    const arr = [w.a, w.i, w.u, w.e, w.o];
+    for (let vi = 0; vi < 5; vi++) {
+      if (mVowels[vi] >= 0) {
+        inf[mVowels[vi]] = Math.min(1, arr[vi] * MOUTH_GAIN[vi]);
+      }
+    }
+  }
+}
+
+(function loop(){
+  requestAnimationFrame(loop);
+  const t = (performance.now() - t0) / 1000;
+  const dt = Math.min(0.1, (performance.now() - (loop._prev || performance.now())) / 1000);
+  loop._prev = performance.now();
+  if (rig && !fitting) {
+    gaze.update(dt);                       // 眼神平滑（两个分支都要走：切动作时不冻结）
+    if (danceOn && mixer) {
+      danceHelper.update(danceClock.getDelta());   // VMD 接管骨骼（含 IK/grant 解算）
+      lockDanceRoot();
+      clampDancePose();
+      groundDance();
+      applyFace(t, false);                   // 表情不接管：只保眨眼 + 说话口型
+      applyGazeEyes();                       // 眼球追随光标（动作模式也必须叠，见函数注释）
+      applyGazeHead();                       // 头部也跟着偏（在 VMD 轨道之上做增量，不再打折）
+    } else {
+      danceClock.getDelta();                 // 空闲时也把时钟走掉，切动作不会一次跳一大步
+      animateBones(t);                       // 内置待机（硬编码微动作）
+      applyGazeEyes();                       // 眼睛单独写，不参与 animateBones 的整骨覆盖
+    }
+    rig.rotation.set(0, YAW, 0);
+    rig.position.x = 0;
+    rig.position.y = baseY + (danceOn ? danceGround.off : 0);
+    rig.position.z = 0;
+    /* 点击反馈：必须在 rig 归位之后、render 之前 —— 它同时改 rig 位移与骨骼增量，
+       放在这里两个动画分支（VMD / 待机）都能叠，且不会被上一步的归位抹掉。 */
+    poke.tick(t);
+    activity.tick(t);   // 活动反应：同 poke 的时序约束（applyFace 之后、render 之前）
+    /* 动作期间用骨骼包围盒算出的固定机位（不跟帧、不追脸）；cx 补偿刀/武器的不对称挥舞 */
+    if (danceOn && motionCam) {
+      camera.position.set(motionCam.cx, motionCam.cy, motionCam.dist);
+      camera.lookAt(motionCam.cx, motionCam.cy, 0);
+    }
+  }
+  renderer.render(scene, camera);
+})();
+
+/* ===================== 气泡 + 语音（与其它版本一致） ===================== */
+(function(){
+  const bubble = document.getElementById('bubble');
+  const tip = document.getElementById('tip');
+  let seq = 0, bubbleTimer = null, curAudio = null;
+
+  /* ================= 流式语音：裸 PCM + WebAudio 队列 =================
+     为什么不用 new Audio(dataURI)：那条路要等后端**整段**合成完（中位 1.9s）
+     才有第一个声音，而豆包第一块 PCM 到手只要 0.4s 左右。这里把分片直接排进
+     播放队列，边收边播，前端不需要任何解码器（s16le → float32 是一步缩放）。
+
+     ★ 采样率固定 24k（豆包 PCM 通道）。AudioContext 也尽量指定 24k，
+       不支持时退回默认采样率 —— buffer 由浏览器自动重采样，功能不受影响。
+     ★ AudioContext 必须在**调用栈同步位置**创建/恢复，绝不能等 fetch 回来
+       再建：那时已经脱离用户手势，可能以 suspended 状态静默不出声。 */
+  const SR_STREAM = 24000;
+  const player = {
+    ctx: null, gain: null, nextTime: 0, scheduled: 0, gaps: 0, gen: 0,
+    sources: [], started: false,
+    acquire: function(){
+      if (this.ctx) {
+        if (this.ctx.state === 'suspended' && this.ctx.resume) this.ctx.resume().catch(function(){});
+        return this.ctx;
+      }
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return null;
+      let c = null;
+      try { c = new AC({ sampleRate: SR_STREAM }); }
+      catch (e) { try { c = new AC(); } catch (e2) { return null; } }
+      this.ctx = c;
+      this.gain = c.createGain();
+      this.gain.gain.value = 1;
+      this.gain.connect(c.destination);
+      if (c.state === 'suspended' && c.resume) c.resume().catch(function(){});
+      return c;
+    },
+    /* 重新开始一次播放：只重置计数，不销毁 AudioContext（复用可以少一次冷启动） */
+    restart: function(){
+      this.gen++;
+      for (let i = 0; i < this.sources.length; i++) {
+        try { this.sources[i].stop(0); } catch (e) {}
+      }
+      this.sources = [];
+      this.nextTime = 0;
+      this.scheduled = 0;
+      this.gaps = 0;
+      this.started = false;
+      return this.gen;
+    },
+    push: function(i16){
+      const c = this.acquire();
+      if (!c || !i16.length) return;
+      const f32 = new Float32Array(i16.length);
+      let peak = 0;
+      for (let i = 0; i < i16.length; i++) {
+        const v = i16[i] / 32768;
+        f32[i] = v;
+        if (v > peak) peak = v;
+        else if (-v > peak) peak = -v;
+      }
+      const ab = c.createBuffer(1, f32.length, SR_STREAM);
+      ab.copyToChannel(f32, 0);
+      const src = c.createBufferSource();
+      src.buffer = ab;
+      src.connect(this.gain);
+      const now = c.currentTime;
+      // 队列见底（合成慢于播放）才算断流，并重新对齐到"现在"避免积压一起播
+      if (this.started && this.nextTime < now - 0.02) this.gaps++;
+      if (this.nextTime < now + 0.02) this.nextTime = now + 0.05;
+      try { src.start(this.nextTime); } catch (e) { return; }
+      this.nextTime += ab.duration;
+      this.scheduled += ab.duration;
+      this.sources.push(src);
+      if (this.sources.length > 64) this.sources.splice(0, this.sources.length - 64);
+      this.started = true;
+    },
+    /* 已播秒数 = 已排入总长 - 播放头之后还排着的长度。它和 PCM 的时间轴严格对齐，
+       所以口型可以直接拿它当"音频里的第几秒"。 */
+    played: function(){
+      if (!this.ctx) return 0;
+      const ahead = Math.max(0, this.nextTime - this.ctx.currentTime);
+      return Math.max(0, this.scheduled - ahead);
+    },
+    /* 播放头之后还有多少秒没播（<=0 表示真的播完了） */
+    idle: function(){
+      if (!this.ctx) return 0;
+      return Math.max(0, this.nextTime - this.ctx.currentTime);
+    }
+  };
+
+  /* ---------- 流式口型 ----------
+     流式播放没有 audio 元素可交给 XiaoyunLipSync.attach（它靠 audio.currentTime
+     与 audio.src 工作），所以这里交给渲染端同形状的东西：weights + stop()。
+
+     开合量来自**真实 PCM 包络**：每块音频到达时按 20ms 一帧算 RMS，播放头落在
+     第几帧就取第几帧 —— 与实际发声逐帧对齐，不靠任何预测。
+     元音按文本音节顺序推进，节拍用固定 0.22s/字（约 4.5 字/秒）：
+     总时长在流式里一直在变，等它出来再等比映射会导致口型回跳，反而更假。 */
+  function makeStreamLip(text){
+    const F = 0.02;                       // 20ms/帧，与 lipsync 引擎同口径
+    const rms = [];
+    const spoken = [];                    // 到该帧为止的累计发声秒数（单调递增）
+    let acc = 0, peak = 0.06, buf = [];
+    let syls = [];
+    try {
+      if (window.XiaoyunLipSync && window.XiaoyunLipSync.parseText) {
+        const raw = window.XiaoyunLipSync.parseText(text) || [];
+        for (let i = 0; i < raw.length; i++) if (raw[i]) syls.push(raw[i]);
+      }
+    } catch (e) { syls = []; }
+
+    const ctl = {
+      ready: false, frames: 0,
+      weights: { a: 0, i: 0, u: 0, e: 0, o: 0, open: 0 },
+      stop: stop
+    };
+    const NAMES = ['a', 'i', 'u', 'e', 'o'];
+    const VIS2NAME = { 1: 'a', 2: 'i', 3: 'u', 4: 'e', 5: 'o' };
+    let cur = { a: 0, i: 0, u: 0, e: 0, o: 0 };
+    let raf = 0, running = false, lastWall = performance.now();
+
+    function feed(i16){
+      for (let i = 0; i < i16.length; i++) buf.push(i16[i] / 32768);
+      const win = Math.round(SR_STREAM * F);      // 480 采样
+      while (buf.length >= win) {
+        let s = 0;
+        for (let i = 0; i < win; i++) { const v = buf[i]; s += v * v; }
+        const r = Math.sqrt(s / win);
+        rms.push(r);
+        if (r > peak) peak = r;
+        if (r > 0.006) acc += F;                  // 只有真发声的帧才算"讲过去的时间"
+        spoken.push(acc);
+        buf = buf.slice(win);
+      }
+      ctl.frames = rms.length;
+      ctl.ready = rms.length > 0;
+    }
+
+    function ampAt(t){
+      if (!rms.length) return 0;
+      const fi = Math.floor(t / F);
+      let v = 0;
+      for (let k = fi - 1; k <= fi + 1; k++) {
+        if (k >= 0 && k < rms.length && rms[k] > v) v = rms[k];
+      }
+      return Math.max(0, Math.min(1, v / Math.max(0.12, peak * 0.7)));
+    }
+
+    function visAt(t){
+      if (!syls.length) return -1;
+      const fi = Math.min(spoken.length - 1, Math.max(0, Math.floor(t / F)));
+      const sp = spoken.length ? spoken[fi] : 0;
+      const per = 0.22;
+      let idx = Math.floor(sp / per);
+      if (idx >= syls.length) idx = syls.length - 1;
+      const syl = syls[idx];
+      if (!syl) return -1;
+      const local = sp - idx * per;
+      const dOn = Math.min(0.11, Math.max(0.035, per * 0.22));
+      if ((syl.vi !== syl.vf || syl.vi === 0) && local < dOn) return syl.vi;
+      return syl.vf;
+    }
+
+    function frame(){
+      if (!running) return;
+      raf = requestAnimationFrame(frame);
+      const t = player.played();
+      const amp = ampAt(t);
+      const vis = visAt(t);
+      const goal = { a: 0, i: 0, u: 0, e: 0, o: 0 };
+      if (amp > 0.03 && vis >= 0) {
+        const nm = VIS2NAME[vis];
+        if (nm) goal[nm] = 0.25 + 0.75 * amp;     // 与引擎的 open 公式一致
+      }
+      const now = performance.now();
+      const dt = Math.min(0.05, Math.max(0.001, (now - lastWall) / 1000 || 0.016));
+      lastWall = now;
+      const rising = goal.a + goal.i + goal.u + goal.e + goal.o > cur.a + cur.i + cur.u + cur.e + cur.o;
+      const tau = (rising ? 40 : 90) / 1000;
+      const alpha = 1 - Math.exp(-dt / Math.max(0.004, tau));
+      let sum = 0;
+      for (let i = 0; i < NAMES.length; i++) {
+        const nm = NAMES[i];
+        cur[nm] += (goal[nm] - cur[nm]) * alpha;
+        if (cur[nm] < 0) cur[nm] = 0;
+        sum += cur[nm];
+      }
+      if (sum > 1) { for (let i = 0; i < NAMES.length; i++) cur[NAMES[i]] /= sum; sum = 1; }
+      for (let i = 0; i < NAMES.length; i++) ctl.weights[NAMES[i]] = cur[NAMES[i]];
+      ctl.weights.open = sum;
+    }
+
+    function stop(){
+      running = false;
+      if (raf) cancelAnimationFrame(raf), raf = 0;
+      ctl.weights = { a: 0, i: 0, u: 0, e: 0, o: 0, open: 0 };
+      cur = { a: 0, i: 0, u: 0, e: 0, o: 0 };
+    }
+
+    // 把流式控制器做成和 XiaoyunLipSync.attach() 同形状：渲染循环只认
+    // weights 与 stop()，不认识内部实现，所以可以直接替换。
+    ctl.ctl = ctl;
+    ctl.feed = feed;
+    ctl.start = function(){
+      running = true;
+      lastWall = performance.now();
+      frame();
+    };
+    ctl.stop = function(){ stop(); };
+    return ctl;
+  }
+
+  function playPcmStream(text, mySeq){
+    if (curAudio) { try { curAudio.pause(); } catch (e) {} curAudio = null; }
+    const myGen = player.restart();
+    const lip = makeStreamLip(text);
+    const ctl = lip;
+    window.__xyLip = ctl;
+    window.xiaoyunSpeaking = true;
+    const t0 = performance.now();
+    let done = false, firstAt = 0, bytes = 0, chunks = 0, streamDone = false;
+    let lastReport = 0;
+
+    player.acquire();          // ← 必须在同步栈里建/恢复，脱离手势就静默无声
+    lip.start();
+    xlog('流式播放开始', 'seq=' + mySeq + ' ' + String(text || '').slice(0, 24));
+
+    /* 把"她正在出声"报给后端，dur = 此刻已排进播放队列的音频总长。
+       ★ 流式只有收到最后一块才知道总长，所以要周期性刷新；后端只认第一次
+         上报作为播放起点，后续只把 dur 往上顶（见 /api/voice/playing）。
+       ★ 不报这一手的后果（实测）：后端退回"按字数估算 + 4s"，40 字算 16s，
+         而她实际只讲 6s —— 界面一直卡在「准备开口…」、麦克风还被锁着，
+         用户喊半天没反应。 */
+    function reportPlaying(force){
+      const d = player.scheduled;
+      if (d <= 0) return Promise.resolve();
+      const now = Date.now();
+      if (!force && now - lastReport < 300) return Promise.resolve();  // 节流
+      lastReport = now;
+      return fetch('/api/voice/playing', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ seq: mySeq, dur: d }), cache: 'no-store'
+      }).catch(function(){});
+    }
+
+    function cleanup(){
+      streamDone = true;
+      if (curAudio) { try { curAudio.pause(); } catch (e) {} curAudio = null; }
+      if (!chunks) fail('没有收到任何音频');
+    }
+
+    function finish(reason){
+      if (done) return;
+      done = true;
+      clearInterval(timer);
+      lip.stop();
+      window.xiaoyunSpeaking = false;
+      // ★ 必须先确认"最终总长"已经到达后端，再发"播完"：两条请求若乱序，
+      //   后端会拿上一条偏短的 dur 判断收尾，提前开麦。
+      reportPlaying(true).then(function(){
+        if (window.xiaoyunAudioEnded) window.xiaoyunAudioEnded(mySeq);
+      });
+      xlog('流式播放结束', 'seq=' + mySeq + ' 音频' + player.scheduled.toFixed(2)
+           + 's 分片' + chunks + ' 断流' + player.gaps + (reason ? ' · ' + reason : ''));
+    }
+
+    function fail(msg){
+      if (done) return;
+      done = true;
+      clearInterval(timer);
+      lip.stop();
+      window.xiaoyunSpeaking = false;
+      if (chunks) reportPlaying(true);   // 已经放过一部分：让后端按真实长度等
+      xlog('流式播放失败', 'seq=' + mySeq + ' ' + msg + ' → 退回整段合成');
+      fallbackAudio(text, mySeq);
+    }
+
+    /* 兜底：流式这一路挂了（WebAudio 起不来、后端 502、网络断）就退回
+       "整段合成 + audio 元素播放"。这就是改流式之前的老路径，一定能出声 ——
+       流式是提速，不能成为她哑掉的新故障点。 */
+    function fallbackAudio(t, sq){
+      fetch('/api/tts_fallback', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: t }), cache: 'no-store'
+      }).then(function(r){
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.blob();
+      }).then(function(blob){
+        const url = URL.createObjectURL(blob);
+        const au = new Audio(url);
+        curAudio = au;
+        window.xiaoyunSpeaking = true;
+        au.onloadedmetadata = function(){
+          try {
+            const d = au.duration;
+            if (d && isFinite(d) && d > 0) {
+              fetch('/api/voice/playing', { method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ dur: d }) }).catch(function(){});
+            }
+          } catch (e) {}
+        };
+        au.onended = function(){
+          window.xiaoyunSpeaking = false;
+          xlog('兜底播放结束', 'seq=' + sq);
+          try { URL.revokeObjectURL(url); } catch (e) {}
+          if (window.xiaoyunAudioEnded) window.xiaoyunAudioEnded(sq);
+        };
+        try {
+          if (window.XiaoyunLipSync) window.__xyLip = window.XiaoyunLipSync.attach(au, t);
+        } catch (e) {}
+        au.play().catch(function(e){
+          // 连兜底都被拦截/放不出声：绝不能报"讲完了"，只把播放权让出去
+          window.xiaoyunSpeaking = false;
+          xlog('兜底播放被拦截', String(e && e.name || e));
+          fetch('/api/voice/unclaim', { method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ seq: sq }) }).catch(function(){});
+        });
+      }).catch(function(e){
+        window.xiaoyunSpeaking = false;
+        xlog('兜底也失败', String(e && e.message || e));
+        // 一个音都没放出来 -> 直接交回收音权，别让后端按字数干等
+        fetch('/api/voice/resume', { method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ seq: sq }) }).catch(function(){});
+      });
+    }
+
+    // 播完检测：所有已排入的音频都播完（播放头追平队列尾）才算结束。
+    // ★ 不能用"流读完了"当结束 —— 收尾时最后一块可能还要播好几秒。
+    // ★ 卡死看门狗：AudioContext 若是 suspended（页面从未被点击过、浏览器
+    //   自动播放策略生效），播放头永远不动，idle() 恒大于 0 —— 那条路会让她
+    //   永远"正在说话"，语音按钮和收音全被卡住。播放头 4s 不前进就当作播完。
+    let lastPlayed = -1, stallMs = 0;
+    const timer = setInterval(function(){
+      if (player.gen !== myGen) { clearInterval(timer); return; }
+      const pl = player.played();
+      if (pl > lastPlayed + 0.001) { lastPlayed = pl; stallMs = 0; }
+      else stallMs += 120;
+      if (streamDone && player.idle() <= 0.02 && player.scheduled > 0) finish();
+      // 保护：流已结束但一直闲着（AudioContext 被挂起等）→ 直接收尾，别卡住收音
+      else if (streamDone && player.scheduled <= 0) finish();
+      else if (player.scheduled > 0 && stallMs > 4000) finish('播放头停滞（AudioContext 可能被挂起）');
+    }, 120);
+
+    const ac = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+    fetch('/api/tts_stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: text, seq: mySeq }),
+      cache: 'no-store',
+      signal: ac ? ac.signal : undefined
+    }).then(function(res){
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      if (!res.body || !res.body.getReader) throw new Error('no stream body');
+      const reader = res.body.getReader();
+      let carry = new Uint8Array(0);
+
+      function pump(){
+        return reader.read().then(function(r){
+          if (r.done) { cleanup(); return; }
+          if (player.gen !== myGen) { try { reader.cancel(); } catch (e) {} return; }
+          const u8 = r.value || new Uint8Array(0);
+          let all;
+          if (carry.length) {
+            all = new Uint8Array(carry.length + u8.length);
+            all.set(carry, 0);
+            all.set(u8, carry.length);
+          } else all = u8;
+          const even = all.length - (all.length % 2);
+          if (even > 0) {
+            const i16 = new Int16Array(all.buffer, all.byteOffset, even >> 1);
+            if (!firstAt) {
+              firstAt = performance.now() - t0;
+              xlog('流式首块音频', Math.round(firstAt) + 'ms ' + (even / 2 / SR_STREAM).toFixed(2) + 's');
+            }
+            player.push(i16);
+            lip.feed(i16);
+            bytes += even;
+            chunks++;
+            reportPlaying();     // 第一块就把"播放起点"告诉后端，之后每次刷新总长
+          }
+          carry = all.slice(even);
+          return pump();
+        });
+      }
+      return pump();
+    }).catch(function(e){
+      if (String(e && e.name) === 'AbortError') { cleanup(); return; }
+      fail(String(e && e.message || e));
+    });
+  }
+
+
+  function say(text, audioUri, streamOn, mySeqArg){
+    /* ★ seq 在函数入口就固定成常量。以前 mp3 分支直接用外层闭包的 seq，
+       而 poll() 收到下一轮回复会改写它 —— 旧音频的 ended 迟到时就会带着
+       **新一轮**的 seq 去报"播完了"，后端校验通不过/越过校验，麦克风在她
+       还没讲完时被打开，录到自己的声音（自问自答）。流式分支早就修了，
+       mp3 兜底分支这次一并对齐。 */
+    const mySeq = (mySeqArg != null ? mySeqArg : seq);
+    bubble.textContent = text;
+    bubble.classList.add('show');
+    clearTimeout(bubbleTimer);
+    bubbleTimer = setTimeout(function(){ bubble.classList.remove('show'); },
+                             Math.min(14000, 4200 + text.length * 190));
+    // ★ 流式优先：后端这一轮没给 audio，只给了文字 + stream 标记，
+    //   音频由页面自己拉裸 PCM。seq 必须在这里固定下来（闭包里的 seq 会被
+    //   下一轮改写，导致播完通知带错序号 —— 那正是自问自答的成因之一）。
+    if (streamOn && mySeq != null){      playPcmStream(text, mySeq);
+      return;
+    }
+    if (audioUri){
+      try{
+        if (curAudio) curAudio.pause();
+        curAudio = new Audio(audioUri);
+        window.xiaoyunSpeaking = true;      // 她开口了：语音按钮要避开这一刻
+        xlog('播放回复语音', String(text || '').slice(0, 30));
+        // 把**真实音频时长**报给后端：后端据此在她讲完之前绝不再打开麦克风。
+        // 否则会在她还在说话时重新收音，把她自己的声音当成用户输入 ->
+        // 自问自答死循环（用时间估算不可靠，所以由页面直接报 duration）。
+        const reportDur = function(){
+          try{
+            const d = curAudio && curAudio.duration;
+            if (d && isFinite(d) && d > 0){
+              fetch('/api/voice/playing', { method:'POST',
+                headers:{'Content-Type':'application/json'},
+                body: JSON.stringify({ dur: d }) }).catch(function(){});
+              xlog('上报播放时长', d.toFixed(2) + 's');
+            }
+          }catch(e){}
+        };
+        curAudio.onloadedmetadata = reportDur;
+        curAudio.onplaying = reportDur;
+        // 播完后通知语音模块"她讲完了"，好恢复收音（连续对话模式）。
+        // ★ 必须把**这条回复的 seq**一并带上：多个宠物页面/播放被拦截时，
+        //   旧音频的 ended 事件可能在**新一轮回复已经开始播放之后**才到达，
+        //   后端若不校验 seq 就会立刻打开麦克风 -> 录到她自己的声音 -> 自循环。
+        curAudio.onended = function(){
+          window.xiaoyunSpeaking = false;
+          xlog('语音播放结束', '通知后端恢复收音 seq=' + mySeq + '（本条）');
+          if (window.xiaoyunAudioEnded) window.xiaoyunAudioEnded(mySeq);
+        };
+        curAudio.play().catch(function(e){
+          console.warn('audio blocked', e);
+          xlog('语音播放被拦截', String(e && e.name || e));
+          window.xiaoyunSpeaking = false;
+          // ★ 被自动播放策略拦截 = 这段音频**没有出声**，绝不能报"她讲完了"：
+          //   否则后端会以为播放结束、立刻恢复收音，而另一个页面（或稍后重试）出声时
+          //   麦克风正开着 -> 自问自答。这里只把播放权让出去，让别的页面接着播。
+          try{
+            fetch('/api/voice/unclaim', { method:'POST',
+              headers:{'Content-Type':'application/json'},
+              body: JSON.stringify({ seq: mySeq }) }).catch(function(){});
+          }catch(e2){}
+        });
+        /* 口型同步：把"要说的文本 + 这段音频"交给 lipsync 引擎，
+           引擎自己在后台解码、算包络、排队口型；渲染循环里读 weights */
+        try{
+          if (window.XiaoyunLipSync){
+            if (window.__xyLip && window.__xyLip.stop) window.__xyLip.stop();
+            window.__xyLip = window.XiaoyunLipSync.attach(curAudio, text);
+            xlog('口型同步已挂载', String(text || '').length + '字');
+          }
+        }catch(e){ xlog('口型同步挂载失败', String(e && e.message || e)); }
+      }catch(e){ xlog('语音播放异常', String(e)); }
+    }
+  }
+  /* ★ 轮询间隔从 1200ms 收到 400ms：它是流式首响的**最大单项成本**。
+     实测（CDP 真跑）：后端 1.35s 就返回了文字，但首块音频要到 1.89s 才落地，
+     中间那 0.5s 全是在等下一次轮询。流式把合成时间压到 0.4s 之后，
+     "多久能发现新回复"就成了唯一瓶颈 —— 1.2s 的间隔等于白扔掉一半收益。
+     /api/last 只是读内存里的 LAST，本地 400ms 一次的开销可以忽略。
+     另加 in-flight 闸：上一轮还没回来就跳过，避免网络抖动时请求堆积。 */
+  let polling = false;
+  function poll(){
+    if (polling) return;
+    polling = true;
+    fetch('/api/last?since=' + seq).then(function(r){ return r.json(); })
+      .then(function(j){
+        if (j && j.fresh && j.reply){
+          seq = j.seq;
+          xlog('收到新回复', 'seq=' + j.seq + (j.stream ? ' (流式)' : ''));
+          say(j.reply, j.audio, j.stream, j.seq);
+        }
+      })
+      .catch(function(){})
+      .then(function(){ polling = false; });
+  }
+  fetch('/api/history').then(function(r){ return r.json(); }).then(function(j){
+    if (j && typeof j.seq === 'number') seq = j.seq;
+  }).catch(function(){}).then(function(){ poll(); setInterval(poll, 400); });
+
+  setTimeout(function(){ tip.style.opacity = 0.9; }, 600);
+  setTimeout(function(){ tip.style.opacity = 0; }, 7000);
+  window.xiaoyunSay = function(text){ if (text) say(text, null); };
+})();
+
+/* ===================== 语音对话 =====================
+   两种方式（点右下角「🎤 按键说话」标签切换）：
+     ptt  按键说话：点麦克风开始听，再点一次结束，自动识别并回复
+     vad  连续对话：点一次进入持续监听，说完停顿约 1 秒自动识别并回复，她说话时自动闭嘴
+   轮询 /api/voice/state 拿状态和音量电平，转写文字由后端自动接去对话，
+   回复仍走原来的 /api/last -> 气泡 + 语音，所以文字聊天那套完全不变。 */
+(function(){
+  const mic    = document.getElementById('mic');
+  const ring   = document.getElementById('micRing');
+  const modeEl = document.getElementById('vmode');
+  const stat   = document.getElementById('vstat');
+  if (!mic) return;
+
+  // 默认"连续对话"：点一次开始听，说完停顿约 1 秒她自动识别并回你，
+  // 不用再点第二次（之前默认的按键说话要再点一次才结束，容易被当成"没反应"）
+  let mode = 'vad';
+  let active = false;        // 会话是否进行中
+  let recording = false;     // 是否正在收音
+  let micBusy = false;       // 她正在想/正在说：麦克风不可用
+  let lastSeq = -1;          // 已展示过的转写序号
+  let lastPhase = null;
+
+  function post(path, obj){
+    return fetch(path, { method:'POST', headers:{'Content-Type':'application/json'},
+                         body: JSON.stringify(obj || {}) }).then(function(r){ return r.json(); });
+  }
+  function setStat(t, kind){
+    stat.textContent = t || '';
+    stat.className = kind || '';
+  }
+  function setMic(){
+    mic.classList.toggle('on', recording);
+    mic.classList.toggle('busy', micBusy && !recording);
+    mic.textContent = recording ? '⏹' : (micBusy ? '💭' : '🎤');
+    mic.title = recording ? '正在听你说话，点击结束'
+              : (micBusy ? '她正在回复，等她说完再点' : '点击开始说话');
+    ring.classList.toggle('live', recording);
+  }
+  function renderMode(){
+    modeEl.textContent = mode === 'vad' ? '🎙 连续对话' : '🎤 按键说话';
+    modeEl.title = mode === 'vad' ? '当前：连续对话（说完停顿自动识别），点击切成按键说话'
+                                  : '当前：按键说话（点了才听、再点结束），点击切成连续对话';
+  }
+
+  // ---- 轮询状态 ----
+  let lastState = null, lastOnline = null;
+  function poll(){
+    fetch('/api/voice/state').then(function(r){ return r.json(); }).then(function(j){
+      if (!j || !j.asr_online){
+        if (lastOnline !== false){
+          lastOnline = false;
+          xlog('ASR 离线', String((j && j.error) || '语音识别服务未启动'));
+        }
+        setStat('语音服务没启动，见 asr_err.log', 'err');
+        setMic();
+        return;
+      }
+      if (lastOnline !== true){
+        lastOnline = true;
+        xlog('ASR 在线', '设备=' + (j.device || '?'));
+      }
+      // 壳是否在线（后端心跳判定）：决定点击归谁处理，见 hasShell()
+      if (shellOnline !== !!j.shell_online){
+        shellOnline = !!j.shell_online;
+        xlog('桌面壳状态', shellOnline ? '在线：点击由壳的隐形层接管'
+                                      : '未检测到（页面自行处理点击）');
+      }
+      // 状态跃迁记录：排查"说完不回"就靠这一段（能看到电平有没有超过阈值）
+      if (j.state !== lastState){
+        xlog('状态变化', String(lastState) + ' -> ' + j.state
+             + ' 电平=' + j.level + ' 原始=' + j.raw_level + ' 阈值=' + j.thr
+             + ' 在语音=' + j.in_speech + ' 静音计数=' + j.silence_run);
+        lastState = j.state;
+      }
+      if (j.mode && j.mode !== mode){
+        mode = j.mode;
+        renderMode();
+        xlog('界面模式同步', mode);
+        setTimeout(pushRects, 60);     // 标签文字变了，宽度也变，位置要重报
+      } else {
+        renderMode();
+      }
+      recording = !!j.recording;
+      active = j.state !== 'off';
+
+      /* ★ 阶段（phase）由后端统一给出，覆盖"等模型响应"这段以前毫无反馈的空白：
+           waiting_model 已取走转写、大脑还没返回（最长，最需要提示）
+           waiting_play  回复已生成、页面还没开口
+           playing       正在播放她的语音
+         这三个阶段麦克风都不能用，样式上也要区分开，避免用户误以为"卡住了"。 */
+      const phase = j.phase || '';
+      micBusy = (phase === 'waiting_model' || phase === 'waiting_play'
+                 || phase === 'playing' || phase === 'wrapping'
+                 || (!!j.busy && !recording));
+      if (phase !== lastPhase){
+        xlog('阶段变化', String(lastPhase) + ' -> ' + phase
+             + '（已 ' + (j.phase_secs || 0) + 's）');
+        lastPhase = phase;
+      }
+
+      // 音量光圈：电平越高光圈越大
+      if (recording){
+        const lv = Math.max(0, Math.min(1, (j.level || 0) * 6));
+        ring.style.transform = 'scale(' + (1 + lv * 0.9).toFixed(2) + ')';
+        ring.style.opacity = String(0.35 + lv * 0.65);
+        setStat(mode === 'vad' ? '🎤 在听…说完停一下' : '🎤 在听…再点一次结束', 'on');
+      } else if (phase === 'waiting_model'){
+        const s = j.phase_secs || 0;
+        setStat('🧠 正在想…' + (s >= 1 ? (s >= 10 ? s.toFixed(0) : s.toFixed(1)) + 's' : ''),
+                s >= 8 ? 'slow' : 'wait');
+      } else if (phase === 'waiting_play'){
+        setStat('准备开口…', 'wait');
+      } else if (phase === 'playing'){
+        const left = j.playback_left || 0;
+        setStat('🔊 正在说…' + (left > 0.2 ? left.toFixed(1) + 's' : ''), 'on');
+      } else if (phase === 'wrapping'){
+        setStat('快好了…', 'wait');
+      } else if (j.state === 'thinking'){
+        setStat('正在识别…');
+      } else if (j.state === 'pending'){
+        setStat('识别到了，等她回话', 'on');
+      } else if (active){
+        setStat(j.detail || '');
+      } else {
+        setStat('');
+      }
+      setMic();
+
+      // 转写出来的文字在气泡里闪一下，让她"听懂了什么"可见
+      if (j.text && j.seq !== lastSeq){
+        lastSeq = j.seq;
+        if (typeof window.xiaoyunSay === 'function') window.xiaoyunSay('我听到：' + j.text);
+      }
+    }).catch(function(){});
+  }
+  setInterval(poll, 400);
+
+  // ---- 点麦克风 ----
+  mic.addEventListener('click', function(ev){
+    ev.stopPropagation();
+    xlog('麦克风点击(页面)', 'recording=' + recording + ' shell=' + hasShell());
+    // 桌面壳在时就交给壳的隐形点击层处理（它盖在同一个位置，且永远是最顶层）。
+    // 页面这里再发一次请求，会和壳的请求叠加成"开完立刻关"——正是"点了没反应"的成因。
+    if (hasShell()){
+      xlog('麦克风点击(页面)', '桌面壳接管，页面不重复触发');
+      return;
+    }
+    if (micBusy){
+      setStat(lastPhase === 'waiting_model' ? '她正在想，等一下…' : '她正在说，等一下…', 'wait');
+      return;
+    }
+    if (window.xiaoyunSpeaking){
+      setStat('她在说话，等一下…', 'err');
+      return;
+    }
+    if (!recording){
+      post('/api/voice/start', { mode: mode }).then(function(j){
+        if (!j.ok) setStat(j.error || '启动失败', 'err');
+        else setStat(mode === 'vad' ? '🎤 在听…说完停一下' : '🎤 在听…再点一次结束', 'on');
+      }).catch(function(){ setStat('启动失败', 'err'); });
+    } else {
+      post('/api/voice/stop').catch(function(){});
+    }
+  });
+
+  // ---- 切换模式 ----
+  modeEl.addEventListener('click', function(ev){
+    ev.stopPropagation();
+    xlog('模式切换点击(页面)', '当前=' + mode + ' shell=' + hasShell());
+    // 同麦克风：桌面壳在时由壳的隐形点击层代劳，页面不重复触发
+    if (hasShell()){
+      xlog('模式切换点击(页面)', '桌面壳接管，页面不重复触发');
+      return;
+    }
+    const next = mode === 'vad' ? 'ptt' : 'vad';
+    post('/api/voice/mode', { mode: next }).then(function(j){
+      if (j.ok){
+        mode = next;
+        renderMode();
+        setStat(mode === 'vad' ? '连续对话：点麦克风开始，说完自动识别'
+                               : '按键说话：点了才听，再点一次结束');
+      }
+    }).catch(function(){});
+  });
+
+  // ---- 她说完话了：告诉后端可以继续听了 ----
+  // 播放只由上面的气泡模块负责（避免两个声音重合），这里只挂"播完"的钩子。
+  // seq 参数是该段音频所属的回复序号：后端用它丢弃"过期"的播完通知。
+  window.xiaoyunAudioEnded = function(endedSeq){
+    xlog('通知后端恢复收音', '/api/voice/resume seq=' + endedSeq);
+    post('/api/voice/resume', { seq: endedSeq }).catch(function(){});
+  };
+
+  /* 透明桌面模式下 WebView2 收不到鼠标事件（微软已知限制），页面上的点击由壳的
+     隐形点击层代劳。控件位置受 DPI 缩放影响壳猜不准，所以把真实位置报上去。
+     两个控件都要报：麦克风按钮 + 「🎙 模式切换」标签（后者以前完全没有点击层）。
+
+     ★★ 坐标走本地 HTTP，绝不要走 pywebview 的 JS 桥（report_mic_rect）。
+       教训：JS 桥是"同步回环"调用，要在桌面壳的主线程上执行；页面按固定频率推坐标
+       会把 WebView2 的 UI 线程堵死 —— 实测表现就是"桌宠卡死"：窗口变成"(未响应)"
+       (IsHungAppWindow=True)，并连带让 dwm 生成 Ghost 替身窗口，把该区域的点击全部
+       吃掉。HTTP 是异步的，永远卡不住 UI（本页的触发日志一直走 HTTP，从未出问题）。 */
+  let lastMicReported = null, lastModeReported = null;
+  function pushRects(){
+    try{
+      var m = document.getElementById('micWrap').getBoundingClientRect();
+      var d = document.getElementById('vmode').getBoundingClientRect();
+      if (!lastMicReported || Math.abs(lastMicReported.x - m.left) > 1
+                            || Math.abs(lastMicReported.y - m.top) > 1
+                            || Math.abs(lastMicReported.w - m.width) > 1){
+        xlog('上报麦克风按钮位置', 'x=' + Math.round(m.left) + ' y=' + Math.round(m.top)
+             + ' w=' + Math.round(m.width)
+             + (lastMicReported ? '（相对上次 Δx=' + Math.round(m.left - lastMicReported.x) + '）' : '')
+             + ' 视口=' + window.innerWidth + 'x' + window.innerHeight);
+        lastMicReported = { x: m.left, y: m.top, w: m.width };
+      }
+      if (!lastModeReported || Math.abs(lastModeReported.x - d.left) > 1
+                             || Math.abs(lastModeReported.y - d.top) > 1
+                             || Math.abs(lastModeReported.w - d.width) > 1){
+        xlog('上报模式标签位置', 'x=' + Math.round(d.left) + ' y=' + Math.round(d.top)
+             + ' w=' + Math.round(d.width) + ' h=' + Math.round(d.height)
+             + (lastModeReported ? '（相对上次 Δx=' + Math.round(d.left - lastModeReported.x) + '）' : ''));
+        lastModeReported = { x: d.left, y: d.top, w: d.width };
+      }
+      post('/api/ui/rects', {
+        mic:  [m.left, m.top, m.width, m.height],
+        mode: [d.left, d.top, d.width, d.height],
+        vw: window.innerWidth, vh: window.innerHeight
+      }).catch(function(){});
+      return true;
+    }catch(e){ return false; }
+  }
+
+  /* ★ 控件位置必须"常驻上报"，绝不能只在加载时报一次。
+     真实教训：这排控件的横向位置会随状态文字的长度变化而移动（#voice 是收缩宽度的
+     容器，历史上它把麦克风按钮推走了约 40 CSS px）。只报一次的话，壳就一直拿着加载
+     那一刻的过时坐标去盖隐形点击层 —— 用户点得明明正中按钮，却被判成"点了身体"并
+     弹出聊天窗。现在每 0.6s 无条件把最新坐标推给壳：任何位移都会在 0.6s 内被纠正，
+     坐标再也不会过时（第一道保险是把布局改成右对齐、从根上不漂）。 */
+  let rectWatch = null;
+  function startRectWatch(){
+    if (rectWatch) return;                       // 只启一次
+    pushRects();
+    rectWatch = setInterval(pushRects, 600);
+    xlog('控件位置常驻上报', '每 0.6s 经 HTTP 同步给桌面壳（不占用 JS 桥）');
+  }
+  startRectWatch();
+  addEventListener('resize', function(){ setTimeout(pushRects, 300); });
+
+  renderMode();
+  setStat('点麦克风或按 Ctrl+Alt+V 开始说话');
+  xlog('语音模块就绪', '默认 mode=' + mode + ' shell=' + hasShell());
+})();
+</script>
+</body>
+</html>

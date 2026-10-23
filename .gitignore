@@ -1,0 +1,159 @@
+# ============================================================
+# project-nn .gitignore
+# 原则：只上传代码 + 文档 + 小型配置；一切大文件/个人信息/密钥不上传。
+# 扫描依据见 docs/09-风险与架构决策.md 与本文件各节注释。
+# ============================================================
+
+# ---------- Python 运行产物 ----------
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+*.egg-info/
+.eggs/
+build/
+dist/
+*.manifest
+
+# ---------- 虚拟环境（py venv / conda 全不上传）----------
+.venv/
+.venv-asr/
+.venv-svx/
+venv/
+env/
+ENV/
+conda-meta/
+# 内嵌 Miniconda 运行时（2.7G，用户自行安装）
+runtime/
+
+# ---------- 模型权重（3.6G+）----------
+xiaoyun/models/
+# HuggingFace 下载缓存
+**/.cache/huggingface/
+*.safetensors
+*.ckpt
+*.pth
+*.bin
+!xiaoyun/assets/**/*.bin
+
+# ---------- 3D 模型资产（1.6G：39 个 vrm/glb 各 7~88M）----------
+# 注意：peier/（15M PMX+贴图）与 2d/（3.8M）在白名单中放行（见文末 ! 规则）
+xiaoyun/assets/*.vrm
+xiaoyun/assets/*.glb
+xiaoyun/assets/models/
+xiaoyun/assets/avaturn*.glb
+# 排除模型目录时保留 model.json（调色/取景参数是代码的一部分）
+!xiaoyun/assets/models/*/model.json
+!xiaoyun/assets/peier/
+!xiaoyun/assets/peier/model.json
+!xiaoyun/assets/peier/readme.txt
+# peier 模型本体/贴图是模之屋版权素材（可二次配布需署名）——不上传，用户自下载
+**/*.pmx
+**/*.fbx
+!xiaoyun/assets/models/current.txt
+
+# ---------- 动作库（22M VMD，版权素材不上传）----------
+xiaoyun/assets/motions/*.vmd
+xiaoyun/assets/motions/_disabled/
+# 动作元数据（key/label/note）保留
+!xiaoyun/assets/motions/*.json
+!xiaoyun/assets/motions/current.txt
+
+# ---------- 归档与截图（2.2G）----------
+xiaoyun/_archive/
+xiaoyun/pages_archive/
+# 根目录历史截图
+*.png
+*.jpg
+*.jpeg
+*.gif
+# 2d 立绘为 AI 生成的私人形象图（含人物肖像）——不上传
+# !xiaoyun/assets/2d/**
+*.vrm.bak_*
+!xiaoyun/docs/**/*.png
+!xiaoyun/assets/lipsync/*.png
+!xiaoyun/assets/yujie_preview.png
+!xiaoyun/assets/char.png
+
+# ---------- 日志与运行时状态（个人信息：聊天记录/事件流）----------
+xiaoyun/logs/
+*.log
+*.log.bak
+xiaoyun/前端事件日志.txt
+xiaoyun/桌面状态.txt
+xiaoyun/启动日志.txt
+xiaoyun/restart_log.txt
+logs/
+or_proxy_stdout.log
+or_proxy_stderr.log
+swap_brain.log
+proxy_server.log
+vrm_desktop.log
+last_reply.mp3
+desktop.pid
+_shell_launch.cmd
+
+# ---------- 用户数据（SQLite 记忆/事件流，含个人事实）----------
+xiaoyun/data/memory.db
+xiaoyun/data/memory.db-shm
+xiaoyun/data/memory.db-wal
+xiaoyun/data/events.jsonl
+# 偏好文件保留结构示例不上传实际值
+xiaoyun/data/gaze_mode.txt
+xiaoyun/data/poke_style.txt
+
+# ---------- 用户配置（人设当前选择/音色覆盖）----------
+xiaoyun/人设/current.txt
+xiaoyun/人设/voice_override.json
+# 试听 mp3（云端合成产物）
+xiaoyun/人设/试听/
+xiaoyun/assets/motions/current.txt
+
+# ---------- 密钥与凭据（任何形式都不上传）----------
+*.key
+*.pem
+*.env
+.env.*
+config.local.json
+config.local.yaml
+secrets*
+# ★ or_proxy.py 内置兜底 Key（_ARK_FALLBACK_KEY）——上传前必须改为
+#   os.environ.get('ARK_STANDARD_API_KEY', '') 并在 README 说明配 Key 步骤，
+#   然后删除下面这行。agentplan.py 只读环境变量，可安全上传。
+or_proxy/or_proxy.py
+# agentplan.py 本身无 Key（只读环境变量），可上传
+
+# ---------- 素材包（465M FBX / 524M zip，版权素材）----------
+xiaoyun/_archive/素材/
+xiaoyun/_archive/3d模型原始包/
+xiaoyun/_archive/解包原件/
+**/*.fbx
+**/*.rar
+**/*.zip
+!**/vroidcustomitem/**
+
+# ---------- IDE/编辑器 ----------
+.idea/
+.vscode/
+*.iml
+
+# ---------- 临时/脚手架 ----------
+_shot_flag.json
+*.tmp
+*.bak
+*.bak-*
+*_bak*
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---------- 工具侧产物 ----------
+tools/_*.png
+tools/_*.log
+tools/_*.txt
+tools/_pids.txt
+# 测试音频（个人录音/转写样本）不上传；lipsync 样例音（豆包合成台词）保留
+**/*.wav
+xiaoyun/tools/*.mp3
+!xiaoyun/assets/lipsync/sample.mp3
+node_modules/

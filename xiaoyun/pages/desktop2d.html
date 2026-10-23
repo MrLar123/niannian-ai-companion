@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html style="margin:0;padding:0;">
+<head>
+<meta charset="UTF-8">
+<title>念念 2D</title>
+<style>
+  :root{ --pink:#EAA7B2; --ink:#2a2230; }
+  *{ box-sizing:border-box; }
+  /* 页面必须保持真透明：桌面壳会把 WinForms 窗体底色刷成色键色（见 desktop_app.py 的 KEY_COLOR）。
+     立绘本身已抠成 RGBA 透明 PNG，所以这里再透一层就干净了。 */
+  html,body{
+    margin:0; padding:0; width:100%; height:100%; overflow:hidden;
+    background:transparent;
+    font-family:"PingFang SC","Microsoft YaHei",Segoe UI,Arial,sans-serif;
+    user-select:none; -webkit-user-select:none; cursor:default;
+  }
+  #stage{ position:absolute; inset:0; }
+  #stage canvas{ display:block; width:100% !important; height:100% !important; }
+
+  #bubble{ position:absolute; left:50%; top:14px; transform:translate(-50%,8px);
+    max-width:88%; z-index:20; opacity:0; transition:opacity .25s,transform .25s;
+    background:rgba(255,255,255,.95); border:1px solid rgba(217,120,145,.45);
+    border-radius:16px; padding:11px 15px; font-size:14px; line-height:1.6; color:var(--ink);
+    box-shadow:0 6px 22px rgba(217,120,145,.28); pointer-events:none; }
+  #bubble.show{ opacity:1; transform:translate(-50%,0); }
+  #bubble:after{ content:""; position:absolute; left:50%; bottom:-9px; margin-left:-8px;
+    border:9px solid transparent; border-top-color:rgba(255,255,255,.95); border-bottom:0; }
+
+  #tip{ position:absolute; left:0; right:0; bottom:4px; text-align:center; z-index:15;
+    font-size:11px; color:#8a7d8c; opacity:0; transition:opacity .6s; pointer-events:none;
+    text-shadow:0 1px 3px rgba(255,255,255,.95); }
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "three": "/assets/lib/three.module.js",
+    "three/addons/": "/assets/lib/addons/"
+  }
+}
+</script>
+</head>
+<body>
+
+  <div id="stage"></div>
+  <div id="bubble"></div>
+  <div id="tip">拖动我换位置 · 点我打开聊天</div>
+
+<script type="module">
+import * as THREE from 'three';
+
+/* ===================== 资源与观感参数 ===================== */
+const IMG_URL  = '/assets/2d/char.png';    // 已抠成透明底的全身立绘
+const MASK_URL = '/assets/2d/mask.json';   // 轮廓分割查表（由 segment.py 生成）
+const MARGIN  = 1.06;      // 留白：1.0 = 头顶脚底顶满窗口高度，越大她越小
+const NUDGE_X = 0.0;       // 横向微调（占身高比例）
+const NUDGE_Y = 0.0;       // 纵向微调（占身高比例）
+const BLEND   = 0.012;     // 关节过渡带宽度（占身高比例）
+
+/* 关节位置——不是猜的，是从 mask.json 的轮廓分段反推出来的：
+   手臂独立段出现在 0.455~0.889（肩/腕），双腿分叉在 0.45 以下，腰最细在 0.64 附近。 */
+const J = {
+  hip: 0.575, spine: 0.660, chest: 0.755, neck: 0.845, head: 0.900,
+  legX: 0.034, thigh: 0.470, knee: 0.260,
+  armX: 0.086, shoulder: 0.866, elbow: 0.670,
+};
+
+const clamp01 = v => v < 0 ? 0 : v > 1 ? 1 : v;
+const smoothstep = (a, b, x) => { const t = clamp01((x - a) / (b - a)); return t * t * (3 - 2 * t); };
+function report(msg){ try { new Image().src = '/api/3dprobe?d=' + encodeURIComponent(msg); } catch (e) {} }
+
+/* ===================== 渲染基础 ===================== */
+const stage = document.getElementById('stage');
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(34, innerWidth / innerHeight, 0.01, 200);
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.setClearColor(0x000000, 0);
+stage.appendChild(renderer.domElement);
+
+let rig = null, bones = null, boneHome = null, baseY = 0, baseH = 1, fitting = false;
+const t0 = performance.now();
+
+function syncSize() {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight, true);
+}
+
+/* ===================== 自动取景（读屏幕真实帧自校准） ===================== */
+function screenSilhouette() {
+  const gl = renderer.getContext();
+  const W = gl.drawingBufferWidth, H = gl.drawingBufferHeight;
+  const buf = new Uint8Array(W * H * 4);
+  renderer.render(scene, camera);
+  gl.readPixels(0, 0, W, H, gl.RGBA, gl.UNSIGNED_BYTE, buf);
+  let x0 = 1e9, x1 = -1, y0 = 1e9, y1 = -1;
+  for (let y = 0; y < H; y++) {
+    const rb = y * W * 4;
+    for (let x = 0; x < W; x++) {
+      if (buf[rb + x * 4 + 3] > 8) {
+        if (x < x0) x0 = x; if (x > x1) x1 = x;
+        if (y < y0) y0 = y; if (y > y1) y1 = y;
+      }
+    }
+  }
+  return { x0, x1, y0, y1, W, H };
+}
+
+function autofit() {
+  if (!rig) return;
+  fitting = true;
+  syncSize();
+  const fov = camera.fov * Math.PI / 180;
+  rig.updateWorldMatrix(true, true);
+  const size = new THREE.Box3().setFromObject(rig).getSize(new THREE.Vector3());
+  rig.rotation.y = 0; rig.position.set(0, 0, 0);
+  let dist = Math.max(0.05, (size.y * 1.6 / 2) / Math.tan(fov / 2));
+  let last = null;
+  for (let pass = 0; pass < 3; pass++) {
+    if (pass > 0 && last) rig.position.x = last.px;
+    camera.position.set(0, 0, dist);
+    camera.lookAt(0, 0, 0);
+    const s = screenSilhouette();
+    if (s.x1 < 0) break;
+    const k = (2 * dist * Math.tan(fov / 2)) / s.H;
+    const hW = (s.y1 - s.y0 + 1) * k;
+    const cxW = ((s.x0 + s.x1) / 2 - s.W / 2) * k;
+    const cyW = ((s.y0 + s.y1) / 2 - s.H / 2) * k;
+    const px = (last ? last.px : rig.position.x) - cxW;
+    const py = (last ? last.py : rig.position.y) - cyW;
+    last = { px, py, hW, dist };
+    dist = Math.max(0.05, (hW * MARGIN / 2) / Math.tan(fov / 2));
+    rig.position.x = px; rig.position.y = py;
+  }
+  if (last) {
+    rig.position.x = last.px + NUDGE_X * last.hW;
+    rig.position.y = last.py + NUDGE_Y * last.hW;
+    baseY = rig.position.y; baseH = last.hW;
+    report('autofit2d h=' + last.hW.toFixed(3) + ' x=' + rig.position.x.toFixed(3) +
+           ' y=' + rig.position.y.toFixed(3) + ' dist=' + last.dist.toFixed(3));
+  }
+  camera.position.set(0, 0, last ? last.dist : dist);
+  camera.lookAt(0, 0, 0);
+  fitting = false;
+}
+
+/* ===================== 骨架（与 3D 版同一套，只是运动全在画面内） ===================== */
+const BONE_ORDER = ['hips','spine','chest','neck','head',
+                    'thighL','shinL','thighR','shinR',
+                    'upperArmL','foreArmL','upperArmR','foreArmR'];
+const IDX = {}; BONE_ORDER.forEach((n, i) => IDX[n] = i);
+
+function spineChain(y) {
+  const K = [['hips', J.hip], ['spine', J.spine], ['chest', J.chest],
+             ['neck', J.neck], ['head', J.head]];
+  if (y <= K[0][1]) return { hips: 1 };
+  if (y >= K[K.length - 1][1]) return { head: 1 };
+  for (let i = 0; i < K.length - 1; i++) {
+    const [n0, y0] = K[i], [n1, y1] = K[i + 1];
+    if (y >= y0 && y <= y1) { const t = (y - y0) / (y1 - y0); return { [n0]: 1 - t, [n1]: t }; }
+  }
+  return { head: 1 };
+}
+
+function tagWeights(tag, y) {
+  const out = new Array(BONE_ORDER.length).fill(0);
+  if (tag === 'torso') {
+    const s = spineChain(y);
+    for (const k in s) out[IDX[k]] += s[k];
+  } else if (tag === 'armL' || tag === 'armR') {
+    const L = (tag === 'armL');
+    const up = smoothstep(J.elbow - 0.05, J.elbow + 0.07, y);
+    out[IDX[L ? 'upperArmL' : 'upperArmR']] += up;
+    out[IDX[L ? 'foreArmL'  : 'foreArmR' ]] += 1 - up;
+  } else if (tag === 'legL' || tag === 'legR') {
+    const L = (tag === 'legL');
+    const th = smoothstep(J.knee - 0.05, J.knee + 0.07, y);
+    out[IDX[L ? 'thighL' : 'thighR']] += th;
+    out[IDX[L ? 'shinL'  : 'shinR' ]] += 1 - th;
+  }
+  return out;
+}
+
+/** 按"轮廓分段查表"决定顶点归属：躯干 / 左臂 / 右臂 / 左腿 / 右腿 */
+function weights2D(x, y, rows) {
+  const n = rows.length;
+  const bin = Math.max(0, Math.min(n - 1, Math.floor(y * n)));
+  const segs = rows[bin].segs;
+  if (!segs || !segs.length) return tagWeights('torso', y);
+
+  let total = 0;
+  const mem = [];
+  for (const [tag, x0, x1] of segs) {
+    const dist = Math.max(x0 - x, x - x1, 0);
+    const m = 1 - smoothstep(0, BLEND, dist);
+    if (m > 1e-4) { mem.push([tag, m]); total += m; }
+  }
+  if (!total) {
+    // 落在空隙里（该处本就透明），归给最近的段，保证边界过渡连续
+    let best = 'torso', bd = 1e9;
+    for (const [tag, x0, x1] of segs) {
+      const d = Math.min(Math.abs(x - x0), Math.abs(x - x1));
+      if (d < bd) { bd = d; best = tag; }
+    }
+    return tagWeights(best, y);
+  }
+  const out = new Array(BONE_ORDER.length).fill(0);
+  for (const [tag, m] of mem) {
+    const w = tagWeights(tag, y);
+    const k = m / total;
+    for (let i = 0; i < out.length; i++) out[i] += w[i] * k;
+  }
+  return out;
+}
+
+function makeBone(name, x, y, parent) {
+  const b = new THREE.Bone(); b.name = name; b.position.set(x, y, 0);
+  if (parent) parent.add(b); return b;
+}
+
+function buildPuppet(tex, mask) {
+  const rows = mask.rows;
+  const bh = mask.body_h, W = mask.w, H = mask.h, bbox = mask.bbox, cx = mask.cx;
+  // 归一化：身体高度 = 1（脚底 y=0、头顶 y=1、身体中线 x=0）
+  const planeW = W / bh, planeH = H / bh;
+  const centerX = (W / 2 - cx) / bh;
+  const centerY = (bbox[3] - H / 2) / bh;
+
+  const segX = 180, segY = 260;
+  const geo = new THREE.PlaneGeometry(planeW, planeH, segX, segY);
+  geo.translate(centerX, centerY, 0);        // 挪成"脚底在 y=0、中线在 x=0"
+
+  const pos = geo.attributes.position;
+  const n = pos.count;
+  const skinIndex = new Uint16Array(n * 4), skinWeight = new Float32Array(n * 4);
+  for (let i = 0; i < n; i++) {
+    const x = pos.getX(i), y = pos.getY(i);
+    const w = weights2D(x, y, rows);
+    const pairs = [];
+    for (let b = 0; b < w.length; b++) if (w[b] > 1e-4) pairs.push([b, w[b]]);
+    pairs.sort((a, c) => c[1] - a[1]);
+    let sum = 0;
+    for (let s = 0; s < 4; s++) {
+      const p = pairs[s];
+      skinIndex[i * 4 + s] = p ? p[0] : 0;
+      skinWeight[i * 4 + s] = p ? p[1] : 0;
+      if (p) sum += p[1];
+    }
+    if (sum > 0) for (let s = 0; s < 4; s++) skinWeight[i * 4 + s] /= sum;
+  }
+  geo.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(skinIndex, 4));
+  geo.setAttribute('skinWeight', new THREE.Float32BufferAttribute(skinWeight, 4));
+
+  const root = makeBone('root', 0, 0, null);
+  const hips = makeBone('hips', 0, J.hip, root);
+  const spine = makeBone('spine', 0, J.spine - J.hip, hips);
+  const chest = makeBone('chest', 0, J.chest - J.spine, spine);
+  const neck = makeBone('neck', 0, J.neck - J.chest, chest);
+  const head = makeBone('head', 0, J.head - J.neck, neck);
+  const thighL = makeBone('thighL', -J.legX, J.thigh - J.hip, hips);
+  const shinL = makeBone('shinL', 0, J.knee - J.thigh, thighL);
+  const thighR = makeBone('thighR', J.legX, J.thigh - J.hip, hips);
+  const shinR = makeBone('shinR', 0, J.knee - J.thigh, thighR);
+  const upperArmL = makeBone('upperArmL', -J.armX, J.shoulder - J.chest, chest);
+  const foreArmL = makeBone('foreArmL', -0.006, J.elbow - J.shoulder, upperArmL);
+  const upperArmR = makeBone('upperArmR', J.armX, J.shoulder - J.chest, chest);
+  const foreArmR = makeBone('foreArmR', 0.006, J.elbow - J.shoulder, upperArmR);
+
+  const B = { root, hips, spine, chest, neck, head, thighL, shinL, thighR, shinR,
+              upperArmL, foreArmL, upperArmR, foreArmR };
+  const skeleton = new THREE.Skeleton(BONE_ORDER.map(nm => B[nm]));
+
+  const mat = new THREE.MeshBasicMaterial({
+    map: tex, transparent: true, alphaTest: 0.01,
+    depthWrite: false, side: THREE.DoubleSide,
+  });
+  const mesh = new THREE.SkinnedMesh(geo, mat);
+  mesh.add(root);
+  mesh.bind(skeleton);
+  mesh.frustumCulled = false;
+  return { mesh, bones: B, verts: n };
+}
+
+/* ===================== 加载 ===================== */
+Promise.all([
+  fetch(MASK_URL).then(r => r.json()),
+  new Promise((res, rej) => new THREE.TextureLoader().load(IMG_URL, res, undefined, rej)),
+]).then(([mask, tex]) => {
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.minFilter = THREE.LinearMipmapLinearFilter;
+  tex.magFilter = THREE.LinearFilter;
+  tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  tex.generateMipmaps = true;
+
+  const p = buildPuppet(tex, mask);
+  bones = p.bones;
+  boneHome = {};
+  for (const k in bones) {
+    boneHome[k] = { px: bones[k].position.x, py: bones[k].position.y,
+                    rx: bones[k].rotation.x, ry: bones[k].rotation.y, rz: bones[k].rotation.z };
+  }
+  const holder = new THREE.Group();
+  holder.add(p.mesh);
+  holder.position.set(0, -0.5, 0);        // 身体中心从 0.5 挪到原点
+
+  rig = new THREE.Group();
+  rig.add(holder);
+  scene.add(rig);
+  rig.updateWorldMatrix(true, true);
+  report('loaded2d verts=' + p.verts + ' bodyH=' + mask.body_h.toFixed(0) +
+         ' rows=' + mask.rows.length);
+
+  autofit();
+  setTimeout(autofit, 700);
+  setTimeout(autofit, 2000);
+}).catch(e => report('loadfail2d ' + (e && e.message ? e.message : e)));
+
+let rzTimer = null;
+addEventListener('resize', () => { syncSize(); clearTimeout(rzTimer); rzTimer = setTimeout(autofit, 300); });
+
+/* ===================== 待机动作 =====================
+   2D 是纸片人，转动必须发生在画面内（绕 Z 轴），绕 X/Y 会把画面转到侧面去。
+   幅度都很小：目的是"活着"，不是跳舞。 */
+function animateBones(t) {
+  if (!bones || !boneHome) return;
+  const B = bones;
+  const sw  = Math.sin(t * 0.55);            // 重心左右交换
+  const br  = Math.sin(t * 1.5);             // 呼吸
+  const arm = Math.sin(t * 0.85);            // 手臂前后摆动
+  const look = Math.sin(t * 0.21 + 0.6);     // 视线/头部慢转
+
+  // 重心：胯部左右平移 + 轻微倾侧
+  B.hips.position.x = boneHome.hips.px + sw * 0.013;
+  B.hips.position.y = boneHome.hips.py + br * 0.003;
+  B.hips.rotation.z = sw * 0.028;
+
+  // 上身：反向摆动 + 呼吸
+  B.spine.rotation.z = -sw * 0.016;
+  B.chest.rotation.z = -sw * 0.012;
+  B.chest.rotation.y = 0;
+
+  // 头：小幅左右偏头（表情不变，立绘里就是微笑）
+  B.neck.rotation.z = look * 0.022;
+  B.neck.rotation.y = 0;
+  B.head.rotation.z = look * 0.014;
+
+  // 手臂：轻微前后摆动（贴身的"活着"，不要大幅度张开）
+  const aL = 0.012 + arm * 0.020;
+  const aR = 0.012 - arm * 0.020;
+  B.upperArmL.rotation.z = -aL;
+  B.upperArmR.rotation.z =  aR;
+  B.foreArmL.rotation.z  = -aL * 0.35;
+  B.foreArmR.rotation.z  =  aR * 0.35;
+
+  // 腿：随重心轻微受力
+  B.thighL.rotation.z =  sw * 0.010;
+  B.thighR.rotation.z =  sw * 0.010;
+  B.shinL.rotation.z = -sw * 0.006;
+  B.shinR.rotation.z =  sw * 0.006;
+}
+
+(function loop(){
+  requestAnimationFrame(loop);
+  const t = (performance.now() - t0) / 1000;
+  if (rig && !fitting) animateBones(t);
+  renderer.render(scene, camera);
+})();
+
+/* ===================== 气泡 + 语音 ===================== */
+(function(){
+  const bubble = document.getElementById('bubble');
+  const tip = document.getElementById('tip');
+  let seq = 0, bubbleTimer = null, curAudio = null;
+
+  function say(text, audioUri){
+    bubble.textContent = text;
+    bubble.classList.add('show');
+    clearTimeout(bubbleTimer);
+    bubbleTimer = setTimeout(function(){ bubble.classList.remove('show'); },
+                             Math.min(14000, 4200 + text.length * 190));
+    if (audioUri){
+      try{
+        if (curAudio) curAudio.pause();
+        curAudio = new Audio(audioUri);
+        curAudio.play().catch(function(e){ console.warn('audio blocked', e); });
+      }catch(e){}
+    }
+  }
+  function poll(){
+    fetch('/api/last?since=' + seq).then(function(r){ return r.json(); })
+      .then(function(j){ if (j && j.fresh && j.reply){ seq = j.seq; say(j.reply, j.audio); } })
+      .catch(function(){});
+  }
+  fetch('/api/history').then(function(r){ return r.json(); }).then(function(j){
+    if (j && typeof j.seq === 'number') seq = j.seq;
+  }).catch(function(){}).then(function(){ poll(); setInterval(poll, 1200); });
+
+  setTimeout(function(){ tip.style.opacity = 0.9; }, 600);
+  setTimeout(function(){ tip.style.opacity = 0; }, 7000);
+  window.xiaoyunSay = function(text){ if (text) say(text, null); };
+})();
+</script>
+</body>
+</html>

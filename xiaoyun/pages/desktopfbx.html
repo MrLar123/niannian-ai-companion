@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html style="margin:0;padding:0;">
+<head>
+<meta charset="UTF-8">
+<title>念念 FBX</title>
+<style>
+  :root{ --pink:#EAA7B2; --ink:#2a2230; }
+  *{ box-sizing:border-box; }
+  /* 页面必须保持真透明：桌面壳把 WinForms 窗体底色刷成色键色（见 desktop_app.py 的 KEY_COLOR）。
+     渲染器 alpha:true + 清屏透明度 0，这里再透一层就干净了。 */
+  html,body{
+    margin:0; padding:0; width:100%; height:100%; overflow:hidden;
+    background:transparent;
+    font-family:"PingFang SC","Microsoft YaHei",Segoe UI,Arial,sans-serif;
+    user-select:none; -webkit-user-select:none; cursor:default;
+  }
+  #stage{ position:absolute; inset:0; }
+  #stage canvas{ display:block; width:100% !important; height:100% !important; }
+
+  #bubble{ position:absolute; left:50%; top:14px; transform:translate(-50%,8px);
+    max-width:88%; z-index:20; opacity:0; transition:opacity .25s,transform .25s;
+    background:rgba(255,255,255,.95); border:1px solid rgba(217,120,145,.45);
+    border-radius:16px; padding:11px 15px; font-size:14px; line-height:1.6; color:var(--ink);
+    box-shadow:0 6px 22px rgba(217,120,145,.28); pointer-events:none; }
+  #bubble.show{ opacity:1; transform:translate(-50%,0); }
+  #bubble:after{ content:""; position:absolute; left:50%; bottom:-9px; margin-left:-8px;
+    border:9px solid transparent; border-top-color:rgba(255,255,255,.95); border-bottom:0; }
+
+  #tip{ position:absolute; left:0; right:0; bottom:4px; text-align:center; z-index:15;
+    font-size:11px; color:#8a7d8c; opacity:0; transition:opacity .6s; pointer-events:none;
+    text-shadow:0 1px 3px rgba(255,255,255,.95); }
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "three": "/assets/lib/three.module.js",
+    "three/addons/": "/assets/lib/addons/",
+    "fflate": "/assets/lib/addons/libs/fflate.module.js"
+  }
+}
+</script>
+</head>
+<body>
+
+  <div id="stage"></div>
+  <div id="bubble"></div>
+  <div id="tip">拖动我换位置 · 点我打开聊天</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
+
+/* ===================== 观感参数（改这里就能调） ===================== */
+const MODEL_URL = '/assets/peier/椛暗式-姵儿.fbx';
+const RES_PATH  = '/assets/peier/';       // 纹理所在目录
+const YAW       = 0;                      // 该 FBX 面向 +Z（正对相机）；若她背对着你就改回 Math.PI
+const MARGIN    = 1.26;                   // 留白：1.0 = 头顶脚底刚好顶满窗口高度
+                                          // ⚠ 太小会因头部超出画面导致自动取景量不准（恶性循环），1.2~1.3 安全
+const NUDGE_X   = 0.0;
+const NUDGE_Y   = 0.0;
+const ARM_DROP  = 1.15;                   // T/A-pose 手臂压回身侧的弧度
+
+/* ===================== 渲染器 / 相机 / 灯光 ===================== */
+const stage    = document.getElementById('stage');
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.setClearColor(0x000000, 0);
+stage.appendChild(renderer.domElement);
+
+const scene  = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(34, innerWidth / innerHeight, 0.01, 500);
+
+scene.add(new THREE.HemisphereLight(0xffffff, 0x9aa4b8, 1.5));
+const keyL  = new THREE.DirectionalLight(0xffffff, 1.9); keyL.position.set(1.2, 1.8, 2.4);  scene.add(keyL);
+const fillL = new THREE.DirectionalLight(0xffffff, 1.0); fillL.position.set(-2.0, 1.0, 1.6); scene.add(fillL);
+const rimL  = new THREE.DirectionalLight(0xcdd9ff, 1.3); rimL.position.set(-0.4, 1.2, -2.4); scene.add(rimL);
+
+let rig = null, bones = {}, boneHome = {}, baseY = 0, fitting = false;
+const t0 = performance.now();
+
+function syncSize() {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+}
+
+function report(msg) {
+  new Image().src = '/api/3dprobe?d=' + encodeURIComponent(msg).replace(/%20/g, '+');
+}
+
+/* ===================== 自动取景（读屏幕上真实画出的那一帧） ===================== */
+function screenSilhouette() {
+  const gl = renderer.getContext();
+  const W = renderer.domElement.width, H = renderer.domElement.height;
+  const buf = new Uint8Array(W * H * 4);
+  gl.readPixels(0, 0, W, H, gl.RGBA, gl.UNSIGNED_BYTE, buf);
+  let x0 = 1e9, x1 = -1, y0 = 1e9, y1 = -1;
+  for (let y = 0; y < H; y++) {
+    const rb = (H - 1 - y) * W * 4;          // readPixels 行序自下而上，翻回来
+    for (let x = 0; x < W; x++) {
+      if (buf[rb + x * 4 + 3] > 8) {
+        if (x < x0) x0 = x; if (x > x1) x1 = x;
+        if (y < y0) y0 = y; if (y > y1) y1 = y;
+      }
+    }
+  }
+  return { x0, x1, y0, y1, W, H };
+}
+
+function autofit() {
+  if (!rig) return;
+  fitting = true;
+  syncSize();
+  const fov = camera.fov * Math.PI / 180;
+  rig.updateWorldMatrix(true, true);
+  const size = new THREE.Box3().setFromObject(rig).getSize(new THREE.Vector3());
+  rig.rotation.y = YAW; rig.position.set(0, 0, 0);
+  let dist = Math.max(0.05, (size.y * 1.6 / 2) / Math.tan(fov / 2));
+  let last = null;
+  for (let pass = 0; pass < 3; pass++) {
+    if (pass > 0 && last) rig.position.set(last.px, last.py, 0);
+    camera.position.set(0, 0, dist);
+    camera.lookAt(0, 0, 0);
+    renderer.render(scene, camera);
+    const s = screenSilhouette();
+    if (s.x1 < 0) break;
+    const k = (2 * dist * Math.tan(fov / 2)) / s.H;
+    const hW = (s.y1 - s.y0 + 1) * k;
+    const cxW = ((s.x0 + s.x1) / 2 - s.W / 2) * k;
+    const cyW = ((s.y0 + s.y1) / 2 - s.H / 2) * k;
+    const px = (last ? last.px : rig.position.x) - cxW;
+    const py = (last ? last.py : rig.position.y) - cyW;
+    last = { px, py, hW, dist };
+    dist = Math.max(0.05, (hW * MARGIN / 2) / Math.tan(fov / 2));
+    rig.position.set(px, py, 0);
+  }
+  if (last) {
+    rig.position.set(last.px + NUDGE_X * last.hW, last.py + NUDGE_Y * last.hW, 0);
+    baseY = rig.position.y;
+    report('fbxfit h=' + last.hW.toFixed(3) + ' dist=' + last.dist.toFixed(3));
+  }
+  camera.position.set(0, 0, last ? last.dist : dist);
+  camera.lookAt(0, 0, 0);
+  fitting = false;
+}
+
+/* ===================== 骨骼名匹配 =====================
+   MMD/FBX 模型的骨骼名来自 MikuMikuDance 的日文命名规范。
+   （也兼容部分英文化导出）。找不到对应骨骼时该项动作自动跳过，不会报错。 */
+/* MMD 标准日文骨骼名（足=大腿、ひざ=膝/小腿、足首=脚踝、ひじ=肘） */
+const BONE_ALIAS = {
+  hips:      ['センター','center','Center','Hips','hips','腰'],
+  spine:     ['上半身','upper body','UpperBody','Spine','spine'],
+  chest:     ['上半身2','upper body2','UpperBody2','Chest','chest'],
+  neck:      ['首','neck','Neck'],
+  head:      ['頭','head','Head'],
+  armL:      ['左腕','左 腕','LeftArm','leftUpperArm','L_UpperArm'],
+  armR:      ['右腕','右 腕','RightArm','rightUpperArm','R_UpperArm'],
+  foreArmL:  ['左ひじ','左 ひじ','LeftElbow','LeftForeArm','leftLowerArm'],
+  foreArmR:  ['右ひじ','右 ひじ','RightElbow','RightForeArm','rightLowerArm'],
+  legL:      ['左足','左 足','LeftLeg','leftUpperLeg','L_UpperLeg'],
+  legR:      ['右足','右 足','RightLeg','rightUpperLeg','R_UpperLeg'],
+  shinL:     ['左ひざ','左 ひざ','LeftKnee','leftLowerLeg','L_LowerLeg'],
+  shinR:     ['右ひざ','右 ひざ','RightKnee','rightLowerLeg','R_LowerLeg'],
+};
+
+function collectBones(root) {
+  const out = {};
+  root.traverse((o) => { if (o.isBone) out[o.name] = o; });
+  return out;
+}
+
+function findBone(boneMap, aliases) {
+  for (const a of aliases) {
+    if (boneMap[a]) return boneMap[a];
+  }
+  for (const a of aliases) {                    // 退而求其次：包含匹配
+    for (const nm in boneMap) {
+      if (nm.includes(a) || a.includes(nm)) return boneMap[nm];
+    }
+  }
+  return null;
+}
+
+/* ===================== 加载 =====================
+   MMD 导出的 FBX 内部纹理路径常是 Windows 反斜杠（如 tex\11.png），
+   直接拼 URL 会 404 → 材质全丢（渲染成默认色块）。
+   用 LoadingManager 的 URL 修改器把反斜杠统一成正斜杠。 */
+const manager = new THREE.LoadingManager();
+manager.setURLModifier((url) => {
+  if (url.startsWith('blob:') || url.startsWith('data:')) return url;
+  return url.replace(/\\/g, '/');
+});
+const loader = new FBXLoader(manager);
+loader.setResourcePath(RES_PATH);
+
+loader.load(MODEL_URL, (obj) => {
+  // 归一化：身高=1、脚底 y=0
+  obj.updateWorldMatrix(true, true);
+  const box = new THREE.Box3().setFromObject(obj);
+  const size = box.getSize(new THREE.Vector3());
+  const center = box.getCenter(new THREE.Vector3());
+  report('fbxraw size=' + [size.x, size.y, size.z].map(v => v.toFixed(2)).join('x'));
+  const h = size.y || 1;
+  const s = 1 / h;
+  obj.scale.setScalar(s);
+  obj.position.set(-center.x * s, -box.min.y * s, -center.z * s);
+
+  // 中心挪回原点（否则相机 lookAt 原点=看脚底，身体会跑到画面外）
+  const holder = new THREE.Group();
+  holder.add(obj);
+  holder.position.set(0, -0.5, 0);
+  holder.updateWorldMatrix(true, true);
+  const b2 = new THREE.Box3().setFromObject(holder);
+  report('fbxnorm size=' + [b2.max.x - b2.min.x, b2.max.y - b2.min.y, b2.max.z - b2.min.z]
+         .map(v => v.toFixed(3)).join('x') + ' minY=' + b2.min.y.toFixed(3));
+
+  rig = new THREE.Group();
+  rig.add(holder);
+  scene.add(rig);
+  rig.updateWorldMatrix(true, true);
+
+  // 骨骼收集 + 名称上报（用于确认别名是否匹配上）
+  const bm = collectBones(obj);
+  const allNames = Object.keys(bm);
+  for (const key in BONE_ALIAS) {
+    const b = findBone(bm, BONE_ALIAS[key]);
+    if (b) { bones[key] = b; boneHome[key] = { rx: b.rotation.x, ry: b.rotation.y, rz: b.rotation.z }; }
+  }
+  // 分批上报全部骨骼名（URL 长度有限），便于确认别名匹配情况
+  const found = Object.keys(bones).join(',');
+  report('fbxbones found=' + found);
+  for (let i = 0; i < allNames.length; i += 30) {
+    report('fbxname ' + i + ' ' + allNames.slice(i, i + 30).join('|'));
+  }
+
+  autofit();
+  setTimeout(autofit, 800);
+  setTimeout(autofit, 2200);
+}, (p) => {
+  if (p.total) report('fbxprogress ' + Math.round(p.loaded / p.total * 100) + '%');
+}, (err) => {
+  report('fbxfail ' + (err && err.message ? err.message : err));
+});
+
+let rzTimer = null;
+addEventListener('resize', () => { syncSize(); clearTimeout(rzTimer); rzTimer = setTimeout(autofit, 300); });
+
+/* ===================== 待机动作 =====================
+   原则（用户明确要求）：要肢体动作，但整身绝对不漂、不像幽灵。
+   1) rig 的位置/旋转每帧锁死；
+   2) 只在头/手臂/腿这类局部关节上做极小角度动作；
+   3) 不做会让整身水平漂移的 Y 轴旋转。 */
+function animateBones(t) {
+  if (!bones || !Object.keys(bones).length) return;
+  const br   = Math.sin(t * 1.4);
+  const arm  = Math.sin(t * 0.9);
+  const armZ = Math.sin(t * 0.7 + 1.3);
+  const look = Math.sin(t * 0.35);
+  const wgt  = Math.sin(t * 0.45);
+
+  rig.scale.setScalar(1 + br * 0.003);          // 整身唯一允许的"活着感"：极轻呼吸
+
+  const set = (k, x, y, z) => {
+    const b = bones[k]; if (!b) return;
+    const hm = boneHome[k];
+    b.rotation.set(hm.rx + x, hm.ry + y, hm.rz + z);
+  };
+  const lock = (k) => {
+    const b = bones[k]; if (!b) return;
+    const hm = boneHome[k];
+    if (hm) b.rotation.set(hm.rx, hm.ry, hm.rz);
+  };
+
+  set('neck', 0, look * 0.030, 0);
+  lock('head');
+
+  // 手臂：先压回身侧（A/T-pose），再叠加自然微摆
+  set('armL', arm * 0.05, 0, -ARM_DROP + armZ * 0.018);
+  set('armR', -arm * 0.05, 0,  ARM_DROP + armZ * 0.018);
+  set('foreArmL', -0.05 - arm * 0.035, 0, 0);
+  set('foreArmR', -0.05 + arm * 0.035, 0, 0);
+
+  set('legL', wgt * 0.010, 0, 0);
+  set('legR', -wgt * 0.010, 0, 0);
+  lock('shinL'); lock('shinR');
+
+  // 躯干根关节锁死 —— "不漂不扭曲"的关键
+  lock('hips'); lock('spine'); lock('chest');
+}
+
+(function loop(){
+  requestAnimationFrame(loop);
+  const t = (performance.now() - t0) / 1000;
+  if (rig && !fitting) {
+    animateBones(t);
+    rig.rotation.set(0, YAW, 0);
+    rig.position.x = 0;
+    rig.position.y = baseY;
+    rig.position.z = 0;
+  }
+  renderer.render(scene, camera);
+})();
+
+/* ===================== 气泡 + 语音（与其它版本一致） ===================== */
+(function(){
+  const bubble = document.getElementById('bubble');
+  const tip = document.getElementById('tip');
+  let seq = 0, bubbleTimer = null, curAudio = null;
+
+  function say(text, audioUri){
+    bubble.textContent = text;
+    bubble.classList.add('show');
+    clearTimeout(bubbleTimer);
+    bubbleTimer = setTimeout(function(){ bubble.classList.remove('show'); },
+                             Math.min(14000, 4200 + text.length * 190));
+    if (audioUri){
+      try{
+        if (curAudio) curAudio.pause();
+        curAudio = new Audio(audioUri);
+        curAudio.play().catch(function(e){ console.warn('audio blocked', e); });
+      }catch(e){}
+    }
+  }
+  function poll(){
+    fetch('/api/last?since=' + seq).then(function(r){ return r.json(); })
+      .then(function(j){ if (j && j.fresh && j.reply){ seq = j.seq; say(j.reply, j.audio); } })
+      .catch(function(){});
+  }
+  fetch('/api/history').then(function(r){ return r.json(); }).then(function(j){
+    if (j && typeof j.seq === 'number') seq = j.seq;
+  }).catch(function(){}).then(function(){ poll(); setInterval(poll, 1200); });
+
+  setTimeout(function(){ tip.style.opacity = 0.9; }, 600);
+  setTimeout(function(){ tip.style.opacity = 0; }, 7000);
+  window.xiaoyunSay = function(text){ if (text) say(text, null); };
+})();
+</script>
+</body>
+</html>

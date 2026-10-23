@@ -1,0 +1,722 @@
+<!DOCTYPE html>
+<html style="margin:0;padding:0;">
+<head>
+<meta charset="UTF-8">
+<title>念念 VRM</title>
+<style>
+  :root{ --pink:#EAA7B2; --ink:#2a2230; }
+  *{ box-sizing:border-box; }
+  /* 页面必须保持真透明：桌面壳会把 WinForms 窗体底色刷成色键色（见 desktop_app.py 的 KEY_COLOR）。
+     渲染器 alpha:true + 清屏透明度 0，所以这里再透一层就干净了。 */
+  html,body{
+    margin:0; padding:0; width:100%; height:100%; overflow:hidden;
+    background:transparent;
+    font-family:"PingFang SC","Microsoft YaHei",Segoe UI,Arial,sans-serif;
+    user-select:none; -webkit-user-select:none; cursor:default;
+  }
+  #stage{ position:absolute; inset:0; }
+  #stage canvas{ display:block; width:100% !important; height:100% !important; }
+
+  #bubble{ position:absolute; left:50%; top:14px; transform:translate(-50%,8px);
+    max-width:88%; z-index:20; opacity:0; transition:opacity .25s,transform .25s;
+    background:rgba(255,255,255,.95); border:1px solid rgba(217,120,145,.45);
+    border-radius:16px; padding:11px 15px; font-size:14px; line-height:1.6; color:var(--ink);
+    box-shadow:0 6px 22px rgba(217,120,145,.28); pointer-events:none; }
+  #bubble.show{ opacity:1; transform:translate(-50%,0); }
+  #bubble:after{ content:""; position:absolute; left:50%; bottom:-9px; margin-left:-8px;
+    border:9px solid transparent; border-top-color:rgba(255,255,255,.95); border-bottom:0; }
+
+  #tip{ position:absolute; left:0; right:0; bottom:4px; text-align:center; z-index:15;
+    font-size:11px; color:#8a7d8c; opacity:0; transition:opacity .6s; pointer-events:none;
+    text-shadow:0 1px 3px rgba(255,255,255,.95); }
+
+  /* 调参面板：仅 ?debug 时出现，不影响正常外观 */
+  #tune{ position:absolute; top:10px; right:10px; width:252px; z-index:40;
+    background:rgba(30,26,34,.90); border:1px solid rgba(234,167,178,.35);
+    border-radius:12px; padding:10px 12px 12px; color:#e9e2ea;
+    font-size:11px; line-height:1.5; box-shadow:0 10px 30px rgba(0,0,0,.35);
+    backdrop-filter:blur(6px); display:none; }
+  #tune.on{ display:block; }
+  #tune h4{ margin:0 0 8px; font-size:11px; font-weight:600; letter-spacing:.4px;
+    color:#EAA7B2; display:flex; justify-content:space-between; align-items:center; }
+  #tune h4 span{ cursor:pointer; opacity:.7; font-size:13px; }
+  #tune .grp{ margin:9px 0 2px; font-size:10px; color:#9c94a4; letter-spacing:.5px; }
+  #tune .row{ display:flex; align-items:center; gap:6px; margin:2px 0; }
+  #tune .row label{ flex:0 0 62px; color:#cdc5d0; }
+  #tune .row input[type=range]{ flex:1 1 0; min-width:0; height:14px; accent-color:#EAA7B2; }
+  #tune .row b{ flex:0 0 36px; text-align:right; font-weight:500; font-variant-numeric:tabular-nums; color:#fff; }
+  #tune .btns{ display:flex; gap:6px; margin-top:10px; }
+  #tune button{ flex:1; background:rgba(234,167,178,.16); color:#f3ecf2; border:1px solid rgba(234,167,178,.4);
+    border-radius:7px; padding:4px 0; font-size:10px; cursor:pointer; }
+  #tune button:hover{ background:rgba(234,167,178,.3); }
+  #tune .out{ margin-top:7px; width:100%; height:44px; resize:none; font-size:9px; line-height:1.35;
+    background:rgba(0,0,0,.35); color:#b9b1c0; border:1px solid rgba(255,255,255,.12);
+    border-radius:6px; padding:4px 5px; font-family:ui-monospace,Consolas,monospace; }
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "three": "/assets/lib/three.module.js",
+    "three/addons/": "/assets/lib/addons/",
+    "@pixiv/three-vrm": "/assets/lib/vrm/three-vrm.module.js"
+  }
+}
+</script>
+</head>
+<body>
+
+  <div id="stage"></div>
+  <div id="bubble"></div>
+  <div id="tip">拖动我换位置 · 点我打开聊天</div>
+  <div id="tune">
+    <h4>调参面板 <span id="tuneClose" title="收起">×</span></h4>
+    <div id="tuneBody"></div>
+    <div class="btns">
+      <button id="tuneReset">恢复默认</button>
+      <button id="tuneCopy">复制数值</button>
+    </div>
+    <textarea class="out" id="tuneOut" readonly></textarea>
+  </div>
+
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { VRMLoaderPlugin, VRMUtils, MToonMaterialLoaderPlugin } from '@pixiv/three-vrm';
+
+/* ===================== 观感参数（改这里就能调） ===================== */
+/* 模型路径可用 URL 参数 ?model= 覆盖（验证新导出用），缺省是桌面正式模型 */
+const MODEL_URL = new URLSearchParams(location.search).get('model') || '/assets/bjd3d.vrm';   // 混元3D生成 + Blender绑骨的专属模型（已带投影贴图）
+/* 视角可用 URL 参数 ?yaw=<弧度> 覆盖（截图/调试用），缺省 0 = 正对相机 */
+const _qy = parseFloat(new URLSearchParams(location.search).get('yaw'));
+const YAW       = isNaN(_qy) ? 0 : _qy;
+/* 特写对准：?fy=<0~1> 把取景中心从剪影中央挪到剪影高度的该比例处
+   （1=头顶、0.85=面部、0.5=腰腹、0=脚底），缺省 0.5 = 原行为不变。
+   截图/调试用，不影响正常外观。 */
+const _qfy = parseFloat(new URLSearchParams(location.search).get('fy'));
+const FOCUS_Y  = isNaN(_qfy) ? 0 : (_qfy - 0.5);
+let MARGIN    = 1.19;       // 留白：1.0 = 头顶脚底刚好顶满窗口高度，越大她越小
+let NUDGE_X   = 0.0;        // 额外横向微调（占身高比例，负=向左）
+let NUDGE_Y   = -0.02;      // 额外纵向微调（占身高比例，正=向上）
+/* 压臂角不再写死：加载后按 (手-上臂) 世界向量实测（见 vrmloaded 处 armDrop()）。
+   T-pose/A-pose rest pose（标准 VRM 导出）会得到 ≈π/2/π/4 的压角；
+   旧模型（垂臂 rest pose）实测角 ≈ 0，行为与旧版完全一致。 */
+let ARM_DROP_L = 0.0, ARM_DROP_R = 0.0;
+
+/* ===================== 渲染器 / 相机 / 灯光 ===================== */
+const stage    = document.getElementById('stage');
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.setClearColor(0x000000, 0);         // 背景全透明
+stage.appendChild(renderer.domElement);
+
+/* WebView2 里偶发"GPU 掉设备 / 渲染进程没了"时，页面会静默停住——窗口留在最后一帧，
+   用户看到的就是"卡死"。这里把它变成可诊断 + 自愈：
+   先上报后端（/api/3dprobe 会进 srv_err.log），再自动重载一次，最多两次防死循环。 */
+(function guardContext() {
+  const cv = renderer.domElement;
+  cv.addEventListener('webglcontextlost', (ev) => {
+    ev.preventDefault();
+    report('webgllost');
+    let n = 0;
+    try { n = parseInt(sessionStorage.getItem('ctxReload') || '0', 10) || 0; } catch (e) {}
+    if (n < 2) {
+      try { sessionStorage.setItem('ctxReload', String(n + 1)); } catch (e) {}
+      setTimeout(() => location.reload(), 800);
+    } else {
+      report('webgllost giveup reloaded=' + n);
+    }
+  });
+  cv.addEventListener('webglcontextrestored', () => report('webglrestored'));
+  addEventListener('error', (ev) => report('jserr ' + (ev.message || ev.type)));
+  addEventListener('unhandledrejection', (ev) => {
+    const r = ev.reason || {};
+    report('jserr reject ' + (r.message || r));
+  });
+})();
+
+const scene  = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(34, innerWidth / innerHeight, 0.01, 200);
+
+// VRM 是正面光照最自然的，用柔和三点光
+/* ?lux=<倍率> 整体缩放灯光强度（调试/换模型用）。缺省 1 = 原行为不变。
+   依据：VRM 官方 viewer 只有单盏平行光 intensity≈1；这里三点光合计 ≈5.3，
+   MToon 亮区颜色 = 贴图×灯光，浅色贴图（如新模型皮肤 0.98）会被过曝推白，
+   用 ?lux=0.3~0.5 可拉回贴图本色。 */
+const LUX = (() => { const v = parseFloat(new URLSearchParams(location.search).get('lux')); return isNaN(v) ? 1 : v; })();
+const hemiL = new THREE.HemisphereLight(0xffffff, 0x9aa4b8, 1.4 * LUX);
+scene.add(hemiL);
+const keyL  = new THREE.DirectionalLight(0xffffff, 1.8 * LUX); keyL.position.set(1.2, 1.8, 2.4);  scene.add(keyL);
+const fillL = new THREE.DirectionalLight(0xffffff, 0.9 * LUX); fillL.position.set(-2.0, 1.0, 1.6); scene.add(fillL);
+const rimL  = new THREE.DirectionalLight(0xcdd9ff, 1.2 * LUX); rimL.position.set(-0.4, 1.2, -2.4); scene.add(rimL);
+
+let vrm = null, rig = null, baseY = 0, baseH = 1, fitting = false;
+let boneHome = null;
+const t0 = performance.now();
+
+function syncSize() {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+}
+
+function report(msg) {
+  new Image().src = '/api/3dprobe?d=' + encodeURIComponent(msg).replace(/%20/g, '+');
+}
+
+/* ===================== 自动取景（读屏幕上真实画出的那一帧） ===================== */
+/* 这里是"启动卡死"的元凶候选：整屏 readPixels + 逐像素扫描会把 UI 线程按住几百毫秒，
+   而启动阶段 autofit 会被调用多次（加载/700ms/2000ms/resize/调参），叠起来就是
+   Windows 眼里的"未响应"。三处优化，结果不变：
+     1) readPixels 缓冲区按最大尺寸复用一个，不再每次 new W*H*4；
+     2) 扫描按 PIX_STRIDE 抽样（包围盒再补回边缘，取景比例不变）；
+     3) 所有调用走 scheduleFit 合并，最小间隔 350ms。 */
+let _fitBuf = null, _fitBufLen = 0;
+const PIX_STRIDE = 2;
+
+function screenSilhouette() {
+  const gl = renderer.getContext();
+  const W = renderer.domElement.width, H = renderer.domElement.height;
+  const need = W * H * 4;
+  if (!_fitBuf || _fitBufLen < need) { _fitBuf = new Uint8Array(need); _fitBufLen = need; }
+  const buf = _fitBuf;
+  gl.readPixels(0, 0, W, H, gl.RGBA, gl.UNSIGNED_BYTE, buf);
+  let x0 = 1e9, x1 = -1, y0 = 1e9, y1 = -1;
+  for (let y = 0; y < H; y += PIX_STRIDE) {
+    const rb = (H - 1 - y) * W * 4;          // readPixels 行序自下而上，翻回来
+    for (let x = 0; x < W; x += PIX_STRIDE) {
+      if (buf[rb + x * 4 + 3] > 8) {
+        if (x < x0) x0 = x; if (x > x1) x1 = x;
+        if (y < y0) y0 = y; if (y > y1) y1 = y;
+      }
+    }
+  }
+  if (x1 >= 0) {                             // 抽样把边缘往里收了，补回一步
+    x0 -= PIX_STRIDE; x1 += PIX_STRIDE;
+    y0 -= PIX_STRIDE; y1 += PIX_STRIDE;
+  }
+  return { x0, x1, y0, y1, W, H };
+}
+
+/* 合并取景请求：启动时连着调三次，只留最后一次真正执行 */
+let _fitTimer = null, _fitLast = 0;
+function scheduleFit(delay) {
+  const since = performance.now() - _fitLast;
+  const d = Math.max(delay || 0, since < 350 ? 350 - since : 0);
+  if (_fitTimer) clearTimeout(_fitTimer);
+  _fitTimer = setTimeout(() => { _fitTimer = null; _fitLast = performance.now(); autofit(); }, d);
+}
+
+function autofit() {
+  if (!rig) return;
+  fitting = true;
+  syncSize();
+  const fov = camera.fov * Math.PI / 180;
+  rig.rotation.y = YAW; rig.position.set(0, 0, 0);
+  rig.updateWorldMatrix(true, true);
+  const size = new THREE.Box3().setFromObject(rig).getSize(new THREE.Vector3());
+  if (FOCUS_Y !== 0) {
+    /* 特写模式（?fy=）：不走像素收敛——剪影溢屏时那个循环会几何级发散
+       （距离每轮 ×margin 收缩，相机直接穿模），改成按包围盒一次成型：
+       取景中心 = 包围盒高度的 fy 比例处，可见高度 = 包围盒高 × margin。 */
+    const box = new THREE.Box3().setFromObject(rig);
+    const sz = box.getSize(new THREE.Vector3());
+    const cy = box.min.y + (FOCUS_Y + 0.5) * sz.y;
+    const dist = Math.max(0.05, (sz.y * MARGIN / 2) / Math.tan(fov / 2));
+    rig.position.set(0, -cy, 0);
+    camera.position.set(0, 0, dist);
+    camera.lookAt(0, 0, 0);
+    baseY = -cy; baseH = sz.y;
+    report('vrmfit-close fy=' + (FOCUS_Y + 0.5).toFixed(2) +
+           ' h=' + sz.y.toFixed(3) + ' dist=' + dist.toFixed(3));
+    fitting = false;
+    return;
+  }
+  let dist = Math.max(0.05, (size.y * 1.6 / 2) / Math.tan(fov / 2));
+  let last = null;
+  for (let pass = 0; pass < 3; pass++) {
+    if (pass > 0 && last) rig.position.set(last.px, last.py, 0);
+    camera.position.set(0, 0, dist);
+    camera.lookAt(0, 0, 0);
+    renderer.render(scene, camera);
+    const s = screenSilhouette();
+    if (s.x1 < 0) break;
+    /* 溢屏护栏：剪影顶/底/左/右任一边贴到屏幕边缘，说明距离已过小，
+       再收敛只会更小（距离 ×margin）→ 相机穿模。立即停手保持当前机位。 */
+    if ((s.y1 - s.y0 + 1) >= s.H - 1 || (s.x1 - s.x0 + 1) >= s.W - 1) {
+      last = { px: rig.position.x, py: rig.position.y, hW: size.y, dist };
+      report('vrmfit-clipguard h=' + size.y.toFixed(3) + ' dist=' + dist.toFixed(3));
+      break;
+    }
+    const k = (2 * dist * Math.tan(fov / 2)) / s.H;
+    const hW = (s.y1 - s.y0 + 1) * k;
+    const cxW = ((s.x0 + s.x1) / 2 - s.W / 2) * k;
+    const cyW = ((s.y0 + s.y1) / 2 - s.H / 2) * k;
+    const px = (last ? last.px : rig.position.x) - cxW;
+    const py = (last ? last.py : rig.position.y) - cyW;
+    last = { px, py, hW, dist };
+    dist = Math.max(0.05, (hW * MARGIN / 2) / Math.tan(fov / 2));
+    rig.position.set(px, py, 0);
+  }
+  if (last) {
+    rig.position.set(last.px + NUDGE_X * last.hW, last.py + (NUDGE_Y - FOCUS_Y) * last.hW, 0);
+    baseY = rig.position.y; baseH = last.hW;
+    report('vrmfit h=' + last.hW.toFixed(3) + ' dist=' + last.dist.toFixed(3));
+  }
+  camera.position.set(0, 0, last ? last.dist : dist);
+  camera.lookAt(0, 0, 0);
+  fitting = false;
+}
+
+/* ===================== 加载 VRM ===================== */
+const NO_VRM = location.search.includes('novrm');   // 调试：跳过 VRM 插件直接用 GLTFLoader
+const loader = new GLTFLoader();
+if (!NO_VRM) {
+  /* v0CompatShade：VRM0.x 的「亮区颜色钳制在贴图本色以内」。
+     VRM1.0 默认放开钳制，白底贴图 × 灯光直接顶到纯白（四肢发白的根因）。
+     开启后 min(col, diffuseColor) 生效，浅色皮肤恢复贴图自带暖色。 */
+  const useV0Shade = !location.search.includes('v0shade=0');
+  loader.register((parser) => new VRMLoaderPlugin(parser, {
+    mtoonMaterialPlugin: new MToonMaterialLoaderPlugin(parser, { v0CompatShade: useV0Shade })
+  }));
+}
+
+loader.load(MODEL_URL, (gltf) => {
+  vrm = gltf.userData.vrm || null;
+  if (vrm) {
+    VRMUtils.removeUnnecessaryVertices(gltf.scene);
+    VRMUtils.removeUnnecessaryJoints(gltf.scene);
+    if (VRMUtils.combineSkeletons) VRMUtils.combineSkeletons(gltf.scene);  // 新版才有
+  }
+
+  // 归一化：量出真实身高，据此缩放与居中（脚底 y=0、中线 x=0）
+  gltf.scene.updateWorldMatrix(true, true);
+  const box = new THREE.Box3().setFromObject(gltf.scene);
+  const size = box.getSize(new THREE.Vector3());
+  const center = box.getCenter(new THREE.Vector3());
+  report('vrmraw size=' + [size.x, size.y, size.z].map(v => v.toFixed(3)).join('x') +
+         ' min=' + [box.min.x, box.min.y, box.min.z].map(v => v.toFixed(3)).join(',') +
+         ' max=' + [box.max.x, box.max.y, box.max.z].map(v => v.toFixed(3)).join(','));
+  const h = size.y || 1;
+  const s = 1 / h;                                   // 缩放到身高 = 1
+  gltf.scene.scale.setScalar(s);
+  gltf.scene.position.set(-center.x * s, -box.min.y * s, -center.z * s);
+  // 关键：归一化后她站在 y=0~1（中心在 0.5），但相机 lookAt 的是原点。
+  // 必须再用一层 holder 把她的中心挪回原点，否则头和身体会跑到画面上方之外。
+  const holder = new THREE.Group();
+  holder.add(gltf.scene);
+  holder.position.set(0, -0.5, 0);
+  gltf.scene.updateWorldMatrix(true, true);
+  const box2 = new THREE.Box3().setFromObject(holder);
+  const sz2 = box2.getSize(new THREE.Vector3());
+  report('vrmnorm size=' + [sz2.x, sz2.y, sz2.z].map(v => v.toFixed(3)).join('x') +
+         ' minY=' + box2.min.y.toFixed(3) + ' maxY=' + box2.max.y.toFixed(3));
+
+  rig = new THREE.Group();
+  rig.add(holder);
+  scene.add(rig);
+  rig.updateWorldMatrix(true, true);
+
+  // 记录骨骼初始姿态（后面做动作时以它为基准，且"整身绝不动"）
+  // ★ 本模型 rest pose 是"垂臂站姿"而非 T-pose。three-vrm 的归一化骨骼按
+  //   T-pose 重建，与该 rest pose 冲突（会把垂臂强行展开成大字形并撕扯裙摆），
+  //   因此这里直接驱动"原始骨骼"，并关闭库内 normalized→raw 的每帧同步。
+  boneHome = {};
+  if (vrm.humanoid) {
+    try { vrm.humanoid.autoUpdateHumanBones = false; } catch (e) {}
+    for (const nm of HUMAN_BONES) {
+      const b = vrm.humanoid.getRawBoneNode ? vrm.humanoid.getRawBoneNode(nm)
+                                            : vrm.humanoid.getNormalizedBoneNode(nm);
+      if (b) boneHome[nm] = { rx: b.rotation.x, ry: b.rotation.y, rz: b.rotation.z };
+    }
+  }
+  const names = Object.keys(boneHome);
+  /* 实测压臂角：用 rest pose 下 (手关节 - 上臂关节) 的世界方向与"竖直向下"的夹角。
+     T-pose：手臂水平 → 夹角 ≈ π/2；A-pose ≈ π/4；已垂臂 ≈ 0（自动免压）。
+     加一点下限余量（0.35 rad ≈ 20°），A-pose 以下不做无谓的压臂。 */
+  (function armDrop() {
+    const H = vrm.humanoid;
+    if (!H) return;
+    const get = (nm) => (H.getRawBoneNode ? H.getRawBoneNode(nm) : H.getNormalizedBoneNode(nm));
+    for (const [nm, store] of [['left', 'ARM_DROP_L'], ['right', 'ARM_DROP_R']]) {
+      const ua = get(nm + 'UpperArm'), hd = get(nm + 'Hand');
+      if (!ua || !hd) continue;
+      ua.updateWorldMatrix(true, false); hd.updateWorldMatrix(true, false);
+      const pa = new THREE.Vector3().setFromMatrixPosition(ua.matrixWorld);
+      const ph = new THREE.Vector3().setFromMatrixPosition(hd.matrixWorld);
+      const d = ph.sub(pa).normalize();               // rest pose 手臂指向
+      const down = Math.acos(THREE.MathUtils.clamp(-d.y, -1, 1));   // 与竖直向下夹角
+      const drop = Math.max(0, down - 0.35);          // 余量内不压
+      if (nm === 'left')  window.__armL = drop; else window.__armR = drop;
+    }
+    ARM_DROP_L = window.__armL || 0; ARM_DROP_R = window.__armR || 0;
+    delete window.__armL; delete window.__armR;
+  })();
+  report('armdrop L=' + ARM_DROP_L.toFixed(3) + ' R=' + ARM_DROP_R.toFixed(3));
+  // 发际线一圈"浅色碎片"：发丝是双面薄片，掠射角下 GGX 镜面 + Fresnel 直接顶到白，
+  // 再被 CSS brightness(1.28) 放大成一圈白点。这个模型的贴图本身已经画好了明暗，
+  // 不需要 PBR 镜面来"补立体"，所以默认把镜面项压掉（?spec=1 可恢复对照）。
+  const KEEP_SPEC = location.search.includes('spec=1');
+  // 平面投影贴图是"斜着"贴到腿/裙上的（掠射面片），各向同性过滤在斜向会把它抹糊。
+  // 开到硬件上限，斜纹的裙褶/蕾丝才立得住。
+  const MAXANISO = (renderer && renderer.capabilities && renderer.capabilities.getMaxAnisotropy)
+                 ? renderer.capabilities.getMaxAnisotropy() : 1;
+  if (!KEEP_SPEC) {
+    gltf.scene.traverse((o) => {
+      if (!o.isMesh) return;
+      const mats = Array.isArray(o.material) ? o.material : [o.material];
+      for (const m of mats) {
+        if (!m) continue;
+        if (/^Acc/.test(m.name || '')) continue;   // 配饰（金/珍珠）要的就是高光
+        m.metalness = 0.0;
+        if (m.metalnessMap) { m.metalnessMap = null; }
+        m.roughness = 1.0;
+        if (m.roughnessMap) { m.roughnessMap = null; }
+        if ('envMapIntensity' in m) m.envMapIntensity = 0.0;
+        if ('specularIntensity' in m) m.specularIntensity = 0.0;
+        m.needsUpdate = true;
+      }
+      const imgs = [];
+      const mm = Array.isArray(o.material) ? o.material : [o.material];
+      for (const m of mm) {
+        if (!m) continue;
+        for (const key of ['map', 'normalMap', 'emissiveMap', 'alphaMap']) {
+          if (m[key]) imgs.push(m[key]);
+        }
+      }
+      for (const t of imgs) {
+        t.anisotropy = MAXANISO;
+        t.needsUpdate = true;
+      }
+    });
+  }
+  report('aniso=' + MAXANISO);
+  report('vrmloaded bones=' + names.length + ' meta=' + (vrm.meta?.name || '?') +
+         ' spec=' + (KEEP_SPEC ? 'keep' : 'off'));
+
+  /* 皮肤过白修正（?skin=0 关，缺省开）：
+     本模型贴图皮肤底色极浅（Body 贴图 ≈ 250,235,222），VRM1.0 渲染下
+     直射+环境光叠加把白皮顶到 255 纯白；脸因 shade 混色稍好但额头/脸颊仍白。
+     给皮肤材质的 litFactor 乘暖色系数拉回暖肤色：
+       Body 用重系数（四肢没有五官，不怕弄脏），Face 用轻系数保五官干净。
+     系数可用 ?tint=r,g,b 标定 Body（缺省 0.55,0.44,0.32），Face 固定轻度。 */
+  if (!location.search.includes('skin=0')) {
+    const _qt = new URLSearchParams(location.search).get('tint');
+    const tp = _qt ? _qt.split(',').map(parseFloat) : [0.55, 0.44, 0.32];
+    const BODY_TINT = new THREE.Color(tp[0] || 1, tp[1] || 1, tp[2] || 1);
+    const FACE_TINT = new THREE.Color(0.92, 0.80, 0.76);
+    let nSkin = 0;
+    gltf.scene.traverse((o) => {
+      if (!o.isMesh) return;
+      const mats = Array.isArray(o.material) ? o.material : [o.material];
+      for (const m of mats) {
+        if (!m) continue;
+        const nm = m.name || '';
+        if (/Body_00_SKIN/.test(nm)) {
+          if (m.color) m.color.multiply(BODY_TINT);
+          m.needsUpdate = true; nSkin++;
+        } else if (/Face_00_SKIN/.test(nm)) {
+          if (m.color) m.color.multiply(FACE_TINT);
+          m.needsUpdate = true; nSkin++;
+        }
+      }
+    });
+    if (nSkin) report('skintone tinted mats=' + nSkin + ' body=' + BODY_TINT.getHexString() +
+                      ' face=' + FACE_TINT.getHexString());
+  }
+
+  try { sessionStorage.setItem('ctxReload', '0'); } catch (e) {}   // 这轮渲染成功，重置自愈计数
+
+  scheduleFit(0);
+  setTimeout(() => scheduleFit(0), 2000);   // 700ms 那次去掉：只影响中间过程，最终取景由 2s 这次决定
+}, (p) => {
+  if (p.total) report('vrmprogress ' + Math.round(p.loaded / p.total * 100) + '%');
+}, (err) => {
+  report('vrmfail ' + (err && err.message ? err.message : err));
+});
+
+let rzTimer = null;
+addEventListener('resize', () => { syncSize(); clearHitRects(); clearTimeout(rzTimer); rzTimer = setTimeout(() => scheduleFit(0), 300); });
+
+/* 本页没有麦克风/模式按钮：主动上报空坐标，清掉后端可能残留的上一页控件位置。
+   否则桌面壳的隐形点击层会按 PMX 页的旧坐标判定"点中麦克风"，点她下半身会误触发语音。 */
+function clearHitRects() {
+  fetch('/api/ui/rects', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ mic: null, mode: null, vw: innerWidth, vh: innerHeight })
+  }).catch(() => {});
+}
+clearHitRects();
+
+/* ===================== 待机动作 =====================
+   与 3D 版同一套原则（用户明确要求：要肢体动作，但整身绝对不漂、不像幽灵）：
+   1) rig 的位置与旋转每帧锁死；
+   2) 只在头/手臂这类局部关节上做极小角度动作；
+   3) 不做会让整身水平漂移的 Y 轴旋转（VRM 骨骼真实，幅度必须更小才自然）。 */
+const HUMAN_BONES = ['hips','spine','chest','upperChest','neck','head',
+                     'leftShoulder','leftUpperArm','leftLowerArm','leftHand',
+                     'rightShoulder','rightUpperArm','rightLowerArm','rightHand',
+                     'leftUpperLeg','leftLowerLeg','leftFoot',
+                     'rightUpperLeg','rightLowerLeg','rightFoot'];
+
+const ACT = {
+  head:    0.038,   // 头部偏摆幅度（弧度）
+  armX:    0.050,   // 手臂前后摆
+  armZ:    0.018,   // 手臂外张
+  elbow:   0.035,   // 肘部跟随
+  leg:     0.021,   // 腿部承重交换
+  breath:  0.0035,  // 整身呼吸缩放
+};
+
+function animateBones(t) {
+  if (!vrm || !vrm.humanoid || !boneHome) return;
+  const H = vrm.humanoid;
+  const get = (nm) => (H.getRawBoneNode ? H.getRawBoneNode(nm) : H.getNormalizedBoneNode(nm));
+  const br  = Math.sin(t * 1.4);
+  const arm = Math.sin(t * 0.9);
+  const armZ = Math.sin(t * 0.7 + 1.3);
+  const look = Math.sin(t * 0.35);
+  const wgt = Math.sin(t * 0.45);
+
+  // 整身唯一允许的"活着感"：极轻微呼吸（缩放中心在 rig 原点）
+  rig.scale.setScalar(1 + br * ACT.breath);
+
+  const set = (nm, x, y, z) => {
+    const b = get(nm);
+    if (!b) return;
+    const home = boneHome[nm];
+    b.rotation.set(home.rx + x, home.ry + y, home.rz + z);
+  };
+  const lock = (nm) => {
+    const b = get(nm);
+    if (!b) return;
+    const h = boneHome[nm];
+    if (h) b.rotation.set(h.rx, h.ry, h.rz);
+  };
+
+  // 头：极小偏转（脖子根带动，头部主体不额外转）
+  set('neck', 0, look * ACT.head, 0);
+  lock('head');
+
+  // 手臂：先把 T-pose/A-pose 的平举压回身侧（实测压臂角），再叠加自然微摆
+  //   VRM 1.0（面向 +Z）：左臂下垂 = rotation.z 取负；若你的模型手臂朝上，把两个符号对调
+  set('leftUpperArm',  arm * ACT.armX, 0, -ARM_DROP_L + armZ * ACT.armZ);
+  set('rightUpperArm', -arm * ACT.armX, 0,  ARM_DROP_R + armZ * ACT.armZ);
+  set('leftLowerArm',  -0.05 - arm * ACT.elbow, 0, 0);
+  set('rightLowerArm', -0.05 + arm * ACT.elbow, 0, 0);
+
+  // 腿：极轻的承重交换
+  set('leftUpperLeg',  wgt * ACT.leg, 0, 0);
+  set('rightUpperLeg', -wgt * ACT.leg, 0, 0);
+  lock('leftLowerLeg'); lock('rightLowerLeg');
+  lock('leftFoot');     lock('rightFoot');
+
+  // 躯干根关节全部锁死 —— 这是"不漂、不扭曲"的关键
+  for (const nm of ['hips','spine','chest','upperChest',
+                    'leftShoulder','rightShoulder']) lock(nm);
+}
+
+const STATIC_POSE = location.search.includes('static');  // 调试：跳过待机动画
+
+/* ===================== 眨眼驱动 =====================
+   本模型眼睛是"画在贴图上"的，没有独立眼球，所以在 Blender 里做了一个 blink
+   形态键：把眼裂作纵向压扁（上睑带位移随高度线性增大），合眼时贴图被压成一条线。
+   这里只负责按自然节奏喂权重；最终由 vrm.update(t) 应用到网格。
+   URL: ?blink=1 常闭（截图用）/ ?blink=0 不眨 */
+const BLINK_MODE = new URLSearchParams(location.search).get('blink');
+let BLINK_DUR = 0.18;          // 单次眨眼总时长（秒）
+let BLINK_AMP = 0.74;          // 合眼幅度：1 = 完全叠死，0.74 = 半垂眼（已调定）
+let BLINK_GAP_MIN = 2.0, BLINK_GAP_MAX = 4.5;   // 两次眨眼间隔的随机区间
+let DOUBLE_CHANCE = 0.30;      // 连眨两下的概率
+let blinkStart = -1, nextBlink = 1.0 + Math.random() * 1.5;
+
+function blinkWeight(t) {
+  if (blinkStart < 0) return 0;
+  const p = (t - blinkStart) / BLINK_DUR;
+  if (p <= 0 || p >= 1) return 0;
+  return p < 0.42 ? (p / 0.42) : (1 - (p - 0.42) / 0.58);
+}
+
+function driveBlink(t) {
+  const em = vrm && vrm.expressionManager;
+  if (!em) return;
+  try {
+    if (BLINK_MODE === '1') { em.setValue('blink', 1); return; }
+    if (BLINK_MODE === '0') { em.setValue('blink', 0); return; }
+    if (blinkStart < 0 && t >= nextBlink) blinkStart = t;
+    if (blinkStart >= 0 && t - blinkStart >= BLINK_DUR) {
+      blinkStart = -1;
+      // 小概率连眨两下，避免节拍感
+      if (Math.random() < DOUBLE_CHANCE) { blinkStart = t + 0.03; nextBlink = t + 0.6; }
+      else nextBlink = t + BLINK_GAP_MIN + Math.random() * (BLINK_GAP_MAX - BLINK_GAP_MIN);
+    }
+    em.setValue('blink', Math.min(1, blinkWeight(t) * BLINK_AMP));
+  } catch (e) { /* 模型没有 blink 形态键时静默跳过 */ }
+}
+
+/* ===================== 实时调参面板（?debug 显示） =====================
+   拖动即生效、自动存 localStorage，刷新不丢。调好后按"复制数值"把 JSON 发我，
+   我把它固化成默认值（或直接留在本机继续用）。 */
+const TUNE_KEY = 'niannian_tune_v1';
+const TUNE_VER = 4;   // 改动 TDEF 默认值时必须 +1，否则旧 localStorage 会盖住新默认
+const TDEF = {
+  amp:0.74, dur:0.18, gapMin:2.0, gapMax:4.5, dbl:0.30,
+  head:0.038, armX:0.050, armZ:0.018, elbow:0.035, leg:0.021, breath:0.0035,
+  margin:1.19, nudgeY:-0.02, bright:1.02, sat:1.23, faceBright:1.12
+};
+const TUNE_ROWS = [
+  ['眨眼', [
+    ['amp',    '幅度',     0.3, 1.0,  0.01,  2],
+    ['dur',    '时长(s)',  0.08, 0.40, 0.005, 3],
+    ['gapMin', '间隔下限', 0.5, 4.0,  0.1,   1],
+    ['gapMax', '间隔上限', 1.0, 8.0,  0.1,   1],
+    ['dbl',    '连眨概率', 0.0, 0.6,  0.01,  2],
+  ]],
+  ['待机动作', [
+    ['head',   '头部',     0.0, 0.09, 0.002,  3],
+    ['armX',   '手臂前后', 0.0, 0.12, 0.002,  3],
+    ['armZ',   '手臂外张', 0.0, 0.06, 0.002,  3],
+    ['elbow',  '肘部',     0.0, 0.09, 0.002,  3],
+    ['leg',    '腿部',     0.0, 0.03, 0.001,  3],
+    ['breath', '呼吸',     0.0, 0.010, 0.0005, 4],
+  ]],
+  ['画面', [
+    ['margin', '留白',     1.00, 1.60, 0.01,  2],
+    ['nudgeY', '上下微调', -0.15, 0.15, 0.005, 3],
+    ['bright', '亮度',     0.80, 1.50, 0.01,  2],
+    ['sat',    '饱和度',   0.90, 1.70, 0.01,  2],
+  ]],
+];
+
+let T = Object.assign({}, TDEF);
+try {
+  const raw = JSON.parse(localStorage.getItem(TUNE_KEY) || 'null');
+  if (raw && raw.v === TUNE_VER && raw.t) Object.assign(T, raw.t);
+} catch (e) {}
+let refitTimer = null;
+
+const tuneEl = document.getElementById('tune');
+const tuneBody = document.getElementById('tuneBody');
+const tuneOut = document.getElementById('tuneOut');
+const sliders = {};
+
+function applyTune(refit) {
+  BLINK_AMP = T.amp;
+  BLINK_DUR = T.dur;
+  BLINK_GAP_MIN = T.gapMin;
+  BLINK_GAP_MAX = Math.max(T.gapMax, T.gapMin + 0.3);
+  DOUBLE_CHANCE = T.dbl;
+  ACT.head = T.head; ACT.armX = T.armX; ACT.armZ = T.armZ;
+  ACT.elbow = T.elbow; ACT.leg = T.leg; ACT.breath = T.breath;
+  MARGIN = T.margin; NUDGE_Y = T.nudgeY;
+  /* 验收/截图用：?margin=<数值> 临时改留白（越小越近），不影响已存参数 */
+  const _qm = parseFloat(new URLSearchParams(location.search).get('margin'));
+  if (!isNaN(_qm) && _qm > 0.2) MARGIN = _qm;
+  /* 验收/截图用：?bright=/?sat= 临时改增益（排查过曝用），不影响已存参数 */
+  const _qb = parseFloat(new URLSearchParams(location.search).get('bright'));
+  if (!isNaN(_qb) && _qb > 0.05) T.bright = _qb;
+  const _qs = parseFloat(new URLSearchParams(location.search).get('sat'));
+  if (!isNaN(_qs) && _qs >= 0) T.sat = _qs;
+  renderer.domElement.style.filter =
+    'brightness(' + T.bright + ') saturate(' + T.sat + ')';
+  tuneOut.value = JSON.stringify(T);
+  try { localStorage.setItem(TUNE_KEY, JSON.stringify({ v: TUNE_VER, t: T })); } catch (e) {}
+  if (refit) { clearTimeout(refitTimer); refitTimer = setTimeout(() => scheduleFit(0), 260); }
+}
+
+function syncTuneUI() {
+  for (const k in sliders) {
+    sliders[k].i.value = T[k];
+    sliders[k].b.textContent = (+T[k]).toFixed(sliders[k].dec);
+  }
+}
+
+for (const [grp, rows] of TUNE_ROWS) {
+  const g = document.createElement('div'); g.className = 'grp'; g.textContent = grp;
+  tuneBody.appendChild(g);
+  for (const [key, label, min, max, step, dec] of rows) {
+    const r = document.createElement('div'); r.className = 'row';
+    const lb = document.createElement('label'); lb.textContent = label;
+    const ip = document.createElement('input');
+    ip.type = 'range'; ip.min = min; ip.max = max; ip.step = step; ip.value = T[key];
+    const bv = document.createElement('b');
+    bv.textContent = (+T[key]).toFixed(dec);
+    ip.addEventListener('input', () => {
+      T[key] = parseFloat(ip.value);
+      bv.textContent = T[key].toFixed(dec);
+      applyTune(true);
+    });
+    r.append(lb, ip, bv);
+    tuneBody.appendChild(r);
+    sliders[key] = { i: ip, b: bv, dec };
+  }
+}
+
+document.getElementById('tuneClose').addEventListener('click', () => tuneEl.classList.remove('on'));
+document.getElementById('tuneReset').addEventListener('click', () => {
+  T = Object.assign({}, TDEF); syncTuneUI(); applyTune(true);
+});
+document.getElementById('tuneCopy').addEventListener('click', async (ev) => {
+  const btn = ev.currentTarget;
+  try { await navigator.clipboard.writeText(JSON.stringify(T)); btn.textContent = '已复制'; }
+  catch (e) { tuneOut.select(); btn.textContent = '请手动复制'; }
+  setTimeout(() => { btn.textContent = '复制数值'; }, 1200);
+});
+
+applyTune(false);
+syncTuneUI();
+if (new URLSearchParams(location.search).has('debug')) tuneEl.classList.add('on');
+
+(function loop(){
+  requestAnimationFrame(loop);
+  const t = (performance.now() - t0) / 1000;
+  if (rig && !fitting) {
+    if (!STATIC_POSE) animateBones(t);
+    driveBlink(t);
+    if (vrm) vrm.update(t);                 // 形态键 / lookAt / 弹簧骨由库应用
+    rig.rotation.set(0, YAW, 0);            // 整身姿态锁死，只保留朝向修正
+    rig.position.x = 0;
+    rig.position.y = baseY;
+    rig.position.z = 0;
+  }
+  renderer.render(scene, camera);
+})();
+
+/* ===================== 气泡 + 语音（与其它版本一致） ===================== */
+(function(){
+  const bubble = document.getElementById('bubble');
+  const tip = document.getElementById('tip');
+  let seq = 0, bubbleTimer = null, curAudio = null;
+
+  function say(text, audioUri){
+    bubble.textContent = text;
+    bubble.classList.add('show');
+    clearTimeout(bubbleTimer);
+    bubbleTimer = setTimeout(function(){ bubble.classList.remove('show'); },
+                             Math.min(14000, 4200 + text.length * 190));
+    if (audioUri){
+      try{
+        if (curAudio) curAudio.pause();
+        curAudio = new Audio(audioUri);
+        curAudio.play().catch(function(e){ console.warn('audio blocked', e); });
+      }catch(e){}
+    }
+  }
+  function poll(){
+    fetch('/api/last?since=' + seq).then(function(r){ return r.json(); })
+      .then(function(j){ if (j && j.fresh && j.reply){ seq = j.seq; say(j.reply, j.audio); } })
+      .catch(function(){});
+  }
+  fetch('/api/history').then(function(r){ return r.json(); }).then(function(j){
+    if (j && typeof j.seq === 'number') seq = j.seq;
+  }).catch(function(){}).then(function(){ poll(); setInterval(poll, 1200); });
+
+  setTimeout(function(){ tip.style.opacity = 0.9; }, 600);
+  setTimeout(function(){ tip.style.opacity = 0; }, 7000);
+  window.xiaoyunSay = function(text){ if (text) say(text, null); };
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html style="margin:0;padding:0;">
+<head>
+<meta charset="UTF-8">
+<title>念念</title>
+<link rel="stylesheet" href="/css/live2d.css">
+<link rel="stylesheet" href="/font/iconfont.css">
+<script src="/js/model_name.js"></script>
+<script src="/js/live2dcubismcore.js"></script>
+<script src="/js/bundle.js"></script>
+<script src="/js/jquery.min.js"></script>
+<style>
+  :root{ --pink:#EAA7B2; --pink-deep:#d97891; --ink:#2a2230; }
+  *{ box-sizing:border-box; }
+  /* 页面必须保持真透明：桌面程序会把 WinForms 窗体底色刷成色键色（见 desktop_app.py 的
+     KEY_COLOR），WebView2 透出窗体底色后，再由色键把这一整片抠掉。这里千万别填实色。
+     注意：因为窗体是分层色键窗口，本页收不到鼠标事件，点击/拖动由 desktop_app.py 的
+     系统级鼠标钩子接管，所以这里不放任何需要点击的控件。 */
+  html,body{
+    margin:0; padding:0; width:100%; height:100%; overflow:hidden;
+    background:transparent;
+    font-family:"PingFang SC","Microsoft YaHei",Segoe UI,Arial,sans-serif;
+    user-select:none; -webkit-user-select:none; cursor:default;
+  }
+  #stage{ position:absolute; inset:0; z-index:1; }
+  /* 放大策略：窗口高度受屏幕限制（不能超过工作区），所以不靠放大窗口，
+     而是把画布做得比窗口大（见下面的 SCALE），再居中裁切显示。
+     这样模型按大画布渲染，显示出来又大又清晰，不会因为拉伸而糊。 */
+  /* 后两个 translate 是位置校正：bundle.js 把模型画得偏右偏下，这里挪回正中。
+     数值随 SCALE 变化，改 SCALE 后需要重新微调（用 PrintWindow 量边距来收敛）。 */
+  #landlord{ position:absolute; left:50%; top:50%; margin:0;
+    transform:translate(-50%, -50%) translate(-74px, -95px); }
+  #live2d{ width:100% !important; height:100% !important; }
+
+  #bubble{ position:absolute; left:50%; top:14px; transform:translate(-50%,8px);
+    max-width:88%; z-index:20; opacity:0; transition:opacity .25s,transform .25s;
+    background:rgba(255,255,255,.95); border:1px solid rgba(217,120,145,.45);
+    border-radius:16px; padding:11px 15px; font-size:14px; line-height:1.6; color:var(--ink);
+    box-shadow:0 6px 22px rgba(217,120,145,.28); pointer-events:none; }
+  #bubble.show{ opacity:1; transform:translate(-50%,0); }
+  #bubble:after{ content:""; position:absolute; left:50%; bottom:-9px; margin-left:-8px;
+    border:9px solid transparent; border-top-color:rgba(255,255,255,.95); border-bottom:0; }
+
+  #tip{ position:absolute; left:0; right:0; bottom:4px; text-align:center; z-index:15;
+    font-size:11px; color:#8a7d8c; opacity:0; transition:opacity .6s; pointer-events:none;
+    text-shadow:0 1px 3px rgba(255,255,255,.95); }
+</style>
+</head>
+<body>
+
+  <div id="stage">
+    <div id="landlord"><canvas id="live2d" class="live2d"></canvas></div>
+  </div>
+
+  <div id="bubble"></div>
+  <div id="tip">拖动我换位置 · 点我打开聊天</div>
+
+<script>
+  /* bundle.js 在 window.onload 时才初始化，且直接用 canvas.width/height 作为绘制分辨率。
+     所以必须在解析阶段（早于 onload）把尺寸定好：
+       · 画布分辨率 = 窗口尺寸 × SCALE（模型按大画布绘制 → 显示出来大且清晰）
+       · 画布元素本身也放大同样倍数，再居中，超出窗口的部分被裁掉
+     想让她更大/更小，只改这个 SCALE 就行。 */
+  var SCALE = 1.2;
+  (function(){
+    var c   = document.getElementById('live2d');
+    var box = document.getElementById('landlord');
+    var w = document.documentElement.clientWidth  || window.innerWidth  || 386;
+    var h = document.documentElement.clientHeight || window.innerHeight || 582;
+    var cw = Math.round(w * SCALE), ch = Math.round(h * SCALE);
+    c.width = cw; c.height = ch;
+    box.style.width  = cw + 'px';
+    box.style.height = ch + 'px';
+  })();
+
+  (function(){
+    var bubble = document.getElementById('bubble');
+    var tip = document.getElementById('tip');
+    var seq = 0, bubbleTimer = null, curAudio = null;
+
+    function say(text, audioUri){
+      bubble.textContent = text;
+      bubble.classList.add('show');
+      clearTimeout(bubbleTimer);
+      bubbleTimer = setTimeout(function(){ bubble.classList.remove('show'); },
+                               Math.min(14000, 4200 + text.length * 190));
+      if(audioUri){
+        try{
+          if(curAudio) curAudio.pause();
+          curAudio = new Audio(audioUri);
+          curAudio.play().catch(function(e){ console.warn('audio blocked', e); });
+        }catch(e){}
+      }
+    }
+
+    // 聊天窗负责发消息，这里只负责把她的话显示出来
+    function poll(){
+      fetch('/api/last?since=' + seq).then(function(r){ return r.json(); })
+        .then(function(j){
+          if(j && j.fresh && j.reply){ seq = j.seq; say(j.reply, j.audio); }
+        }).catch(function(){});
+    }
+    // 启动时先静默对齐 seq：否则会把上一条回复当成新消息重播一遍（重复朗读）
+    fetch('/api/history').then(function(r){ return r.json(); }).then(function(j){
+      if(j && typeof j.seq === 'number') seq = j.seq;
+    }).catch(function(){}).then(function(){
+      poll();
+      setInterval(poll, 1200);
+    });
+
+    fetch('/api/health').then(function(r){return r.json();}).then(function(j){
+      if(!j || !j.ok) say('后端未就绪，请检查念念是否已启动。');
+    }).catch(function(){});
+
+    // 供桌面壳调用（目前保留，便于以后扩展）
+    window.xiaoyunSay = function(text){ if(text) say(text, null); };
+    window.xiaoyunShowBubble = say;
+
+    setTimeout(function(){ tip.style.opacity = 0.9; }, 600);
+    setTimeout(function(){ tip.style.opacity = 0; }, 7000);
+  })();
+</script>
+</body>
+</html>

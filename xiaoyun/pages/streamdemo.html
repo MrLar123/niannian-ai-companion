@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>念念 · 流式语音试听台</title>
+<style>
+  :root{
+    --bg:#0e0f12; --panel:#16181d; --panel2:#1c1f26; --line:#2a2e37;
+    --txt:#e7e9ee; --dim:#8b909c; --dim2:#5e6370;
+    --accent:#c9a227; --ok:#3fb27f; --bad:#d0504c; --blue:#5b8fd6;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{
+    background:radial-gradient(1200px 600px at 15% -10%,#1b1e26 0%,var(--bg) 60%);
+    color:var(--txt);
+    font:14px/1.6 -apple-system,"Segoe UI","Microsoft YaHei",system-ui,sans-serif;
+    -webkit-font-smoothing:antialiased;
+    padding:28px 24px 40px;
+  }
+  .wrap{max-width:940px;margin:0 auto}
+  header{margin-bottom:22px}
+  h1{font-size:19px;font-weight:600;letter-spacing:.3px;margin:0 0 6px}
+  h1 em{font-style:normal;color:var(--accent)}
+  .sub{color:var(--dim);font-size:12.5px}
+  .sub b{color:#c3c7d1;font-weight:500}
+
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin-bottom:14px}
+  .card h2{font-size:12px;font-weight:600;color:var(--dim);letter-spacing:1px;text-transform:uppercase;margin:0 0 12px}
+
+  textarea{
+    width:100%;min-height:74px;resize:vertical;
+    background:var(--panel2);border:1px solid var(--line);border-radius:8px;
+    color:var(--txt);padding:11px 12px;font:13.5px/1.65 inherit;
+    outline:none;transition:border-color .15s;
+  }
+  textarea:focus{border-color:#3a4150}
+  .row{display:flex;gap:9px;flex-wrap:wrap;align-items:center;margin-top:12px}
+  button{
+    appearance:none;border:1px solid var(--line);background:var(--panel2);color:var(--txt);
+    padding:8px 15px;border-radius:8px;font:13px/1 inherit;cursor:pointer;
+    transition:background .15s,border-color .15s,transform .05s;
+  }
+  button:hover{background:#232732;border-color:#39404e}
+  button:active{transform:translateY(1px)}
+  button:disabled{opacity:.45;cursor:not-allowed}
+  button.primary{background:linear-gradient(180deg,#d8b23a,#b8912a);border-color:#d8b23a;color:#191a1d;font-weight:600}
+  button.primary:hover{background:linear-gradient(180deg,#e3bf4b,#c39a2e)}
+  button.ghost{background:transparent}
+  .hint{color:var(--dim2);font-size:11.5px;margin-left:auto}
+
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(104px,1fr));gap:1px;background:var(--line);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+  .m{background:var(--panel);padding:11px 12px}
+  .m .k{font-size:11px;color:var(--dim2);letter-spacing:.4px;margin-bottom:3px}
+  .m .v{font-size:19px;font-weight:600;font-variant-numeric:tabular-nums;letter-spacing:-.3px}
+  .m .v small{font-size:11px;font-weight:400;color:var(--dim);margin-left:2px}
+  .m.good .v{color:var(--ok)}
+  .m.warn .v{color:var(--accent)}
+  .m.bad .v{color:var(--bad)}
+
+  .reply{
+    margin-top:13px;padding:11px 13px;border-left:2px solid #333a46;background:#12141a;
+    border-radius:0 8px 8px 0;color:#c8ccd5;font-size:13px;white-space:pre-wrap;
+    max-height:150px;overflow:auto;
+  }
+  .reply.empty{color:var(--dim2);font-style:italic}
+
+  .log{max-height:168px;overflow:auto;font:12px/1.75 ui-monospace,Consolas,monospace;color:var(--dim)}
+  .log div{border-bottom:1px solid #191c22;padding:2px 0}
+  .log .t{color:var(--dim2);margin-right:8px}
+  .log .ok{color:var(--ok)}
+  .log .err{color:var(--bad)}
+
+  .bar{height:5px;background:#22262e;border-radius:3px;overflow:hidden;margin-top:13px}
+  .bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,#5b8fd6,#7fb2e8);transition:width .1s linear}
+  .legend{display:flex;gap:16px;color:var(--dim2);font-size:11px;margin-top:7px}
+  .legend span::before{content:"";display:inline-block;width:7px;height:7px;border-radius:2px;margin-right:5px;vertical-align:1px}
+  .legend .l1::before{background:#5b8fd6}
+  .legend .l2::before{background:#c9a227}
+  .legend .l3::before{background:#3fb27f}
+
+  .note{color:var(--dim2);font-size:11.5px;line-height:1.8;margin-top:4px}
+  .note code{background:#1b1e25;padding:1px 5px;border-radius:4px;color:#a9b0bd;font-size:11px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>念念 · <em>流式语音</em>试听台</h1>
+    <div class="sub">
+      同一句话，<b>边合成边播</b>（裸 PCM 分片）对比 <b>等整段合成完</b>。
+      这个页面只做试听与计时，<b>不影响桌面上正在运行的念念</b>。
+    </div>
+  </header>
+
+  <div class="card">
+    <h2>台词</h2>
+    <textarea id="text">今天下午三点我们再开一次会，请提前准备好演示材料。会议室在三楼，别忘了带上你的电脑！对了，晚上一起吃点什么？</textarea>
+    <div class="row">
+      <button class="primary" id="btnTts">合成这段（流式播放）</button>
+      <button id="btnChat">走大脑一轮（流式）</button>
+      <button class="ghost" id="btnOld">旧接口 /api/chat 对比</button>
+      <button class="ghost" id="btnStop">停止</button>
+      <span class="hint" id="voiceHint">—</span>
+    </div>
+    <div class="bar"><i id="bar"></i></div>
+    <div class="legend">
+      <span class="l1">蓝 = 播放进度（占"已收到的音频"）</span>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>上一次结果</h2>
+    <div class="grid">
+      <div class="m good"><div class="k">首响</div><div class="v" id="mFirst">—<small>ms</small></div></div>
+      <div class="m"><div class="k">收完耗时</div><div class="v" id="mTotal">—<small>ms</small></div></div>
+      <div class="m"><div class="k">音频时长</div><div class="v" id="mAudio">—<small>s</small></div></div>
+      <div class="m"><div class="k">分片</div><div class="v" id="mChunks">—</div></div>
+      <div class="m"><div class="k">段数</div><div class="v" id="mSegs">—</div></div>
+      <div class="m" id="mGapBox"><div class="k">断流</div><div class="v" id="mGaps">—</div></div>
+    </div>
+    <div class="reply empty" id="reply">（回复文本会显示在这里）</div>
+    <div class="note">
+      首响 = 从点击到<b>第一块音频落地</b>（不是播完）。旧接口必须等到"收完耗时"那一刻才有声音，
+      所以两者之差就是这一轮省下的等待。
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>事件</h2>
+    <div class="log" id="log"></div>
+  </div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+  var SR = 24000;
+
+  function $(id){ return document.getElementById(id); }
+  function log(msg, cls){
+    var d = document.createElement("div");
+    var t = new Date().toTimeString().slice(0,8);
+    d.innerHTML = '<span class="t">'+t+'</span><span class="'+(cls||'')+'">'+msg+'</span>';
+    var box = $("log");
+    box.insertBefore(d, box.firstChild);
+    while(box.childNodes.length > 80) box.removeChild(box.lastChild);
+  }
+  function b64utf8(b64){
+    if(!b64) return "";
+    var bin = atob(b64), n = bin.length, u8 = new Uint8Array(n);
+    for(var i=0;i<n;i++) u8[i] = bin.charCodeAt(i);
+    try { return new TextDecoder("utf-8").decode(u8); } catch(e){ return ""; }
+  }
+
+  // ---------- PCM 播放队列 ----------
+  // ★ 浏览器要求 AudioContext 在**用户手势的同步栈**里创建/恢复，否则会一直
+  //   处于 suspended，src.start() 不报错但没有声音。所以 acquire() 必须在
+  //   点击处理函数里同步调一次，不能等 fetch 回来再建。
+  var player = {
+    ctx:null, gain:null, nextTime:0, started:false, gaps:0, scheduled:0,
+    acquire:function(){
+      if(!this.ctx){
+        var AC = window.AudioContext || window.webkitAudioContext;
+        this.ctx = new AC({sampleRate: SR});
+      }
+      if(this.ctx.state === "suspended"){
+        try{ this.ctx.resume(); }catch(e){}
+      }
+      // 换一条新的增益总线：上一轮还排着的 source 接到的是旧总线，直接断掉即静音
+      if(this.gain){ try{ this.gain.disconnect(); }catch(e){} }
+      this.gain = this.ctx.createGain();
+      this.gain.gain.value = 1;
+      this.gain.connect(this.ctx.destination);
+      this.nextTime = this.ctx.currentTime + 0.10;
+      this.started = false;
+      this.gaps = 0;
+      this.scheduled = 0;
+    },
+    release:function(){
+      if(this.gain){ try{ this.gain.disconnect(); }catch(e){} }
+      this.gain = null; this.started = false; this.scheduled = 0;
+    },
+    push:function(buf){
+      if(!this.gain) this.acquire();
+      var i16 = new Int16Array(buf);
+      if(!i16.length) return;
+      var f32 = new Float32Array(i16.length);
+      for(var i=0;i<i16.length;i++) f32[i] = i16[i] / 32768;
+      var ab = this.ctx.createBuffer(1, f32.length, SR);
+      ab.copyToChannel(f32, 0);
+      var src = this.ctx.createBufferSource();
+      src.buffer = ab; src.connect(this.gain);
+      var now = this.ctx.currentTime;
+      if(this.started && this.nextTime < now - 0.01) this.gaps++;   // 队列空了 = 断流
+      if(this.nextTime < now + 0.03) this.nextTime = now + 0.06;
+      src.start(this.nextTime);
+      this.nextTime += ab.duration;
+      this.scheduled += ab.duration;
+      this.started = true;
+    },
+    // 已播秒数 = 已排入总长 - 还排在播放头之后的长度
+    played:function(){
+      if(!this.ctx) return 0;
+      var ahead = Math.max(0, this.nextTime - this.ctx.currentTime);
+      return Math.max(0, this.scheduled - ahead);
+    }
+  };
+
+  var running = false, timer = null;
+
+  function setBusy(on){
+    running = on;
+    ["btnTts","btnChat","btnOld"].forEach(function(id){ $(id).disabled = on; });
+    $("btnStop").disabled = !on;
+  }
+  function resetMetrics(){
+    $("mFirst").innerHTML = '—<small>ms</small>';
+    $("mTotal").innerHTML = '—<small>ms</small>';
+    $("mAudio").innerHTML = '—<small>s</small>';
+    $("mChunks").textContent = '—';
+    $("mSegs").textContent = '—';
+    $("mGaps").textContent = '—';
+    $("mGapBox").classList.remove("bad");
+    $("bar").style.width = "0%";
+  }
+
+  // ---------- 流式请求 ----------
+  function streamRequest(url, payload, onHead){
+    player.acquire();
+    resetMetrics();
+    var t0 = performance.now();
+    return fetch(url, {
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify(payload)
+    }).then(function(res){
+      if(!res.ok){
+        return res.json().catch(function(){return {};}).then(function(j){
+          throw new Error(j.error || ("HTTP " + res.status));
+        });
+      }
+      var head = {
+        text: b64utf8(res.headers.get("X-Xiaoyun-Text") || ""),
+        segments: parseInt(res.headers.get("X-Xiaoyun-Segments") || "0", 10),
+        voice: res.headers.get("X-Xiaoyun-Voice") || "",
+        sr: parseInt(res.headers.get("X-Xiaoyun-Sr") || "24000", 10)
+      };
+      if(head.sr && head.sr !== SR){
+        log("注意：服务端采样率 " + head.sr + " 与页面 " + SR + " 不一致", "err");
+      }
+      if(onHead) onHead(head);
+
+      var reader = res.body.getReader();
+      var carry = new Uint8Array(0), bytes = 0, chunks = 0, firstAt = null;
+
+      timer = setInterval(function(){
+        if(!player.ctx || !player.scheduled) return;
+        var pct = Math.min(100, player.played() / player.scheduled * 100);
+        $("bar").style.width = pct.toFixed(1) + "%";
+      }, 80);
+
+      function pump(){
+        return reader.read().then(function(r){
+          if(r.done) return;
+          if(firstAt === null){
+            firstAt = performance.now() - t0;
+            $("mFirst").innerHTML = Math.round(firstAt) + '<small>ms</small>';
+          }
+          chunks++;
+          var u8;
+          if(carry.length){
+            u8 = new Uint8Array(carry.length + r.value.length);
+            u8.set(carry, 0); u8.set(r.value, carry.length);
+          } else {
+            u8 = r.value;
+          }
+          var even = u8.length - (u8.length % 2);
+          if(even > 0){
+            player.push(u8.buffer.slice(u8.byteOffset, u8.byteOffset + even));
+            bytes += even;
+          }
+          carry = u8.slice(even);
+          $("mChunks").textContent = chunks;
+          $("mAudio").innerHTML = (bytes/2/SR).toFixed(2) + '<small>s</small>';
+          return pump();
+        });
+      }
+
+      return pump().then(function(){
+        var total = performance.now() - t0;
+        $("mTotal").innerHTML = Math.round(total) + '<small>ms</small>';
+        $("mAudio").innerHTML = (bytes/2/SR).toFixed(2) + '<small>s</small>';
+        $("mGaps").textContent = player.gaps;
+        $("mGapBox").classList.toggle("bad", player.gaps > 0);
+        return { firstAt: firstAt, total: total, audio: bytes/2/SR, chunks: chunks, gaps: player.gaps };
+      });
+    });
+  }
+
+  // ---------- 旧接口 ----------
+  function oldRequest(msg){
+    player.release();
+    resetMetrics();
+    var t0 = performance.now();
+    return fetch("/api/chat", {
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({message: msg})
+    }).then(function(res){ return res.json().then(function(j){
+      var total = performance.now() - t0;
+      if(!j.ok) throw new Error(j.error || "失败");
+      $("mTotal").innerHTML = Math.round(total) + '<small>ms</small>';
+      $("mFirst").innerHTML = '—<small>ms</small>';
+      $("mAudio").innerHTML = j.audio ? (j.audio.length/4/1024).toFixed(0)+'<small>KB mp3</small>' : '—';
+      $("mChunks").textContent = '—';
+      var t = document.getElementById("reply");
+      t.classList.remove("empty"); t.textContent = j.reply || "";
+      return { total: total, reply: j.reply };
+    });});
+  }
+
+  function setReply(txt){
+    var el = $("reply");
+    if(!txt){ el.classList.add("empty"); el.textContent = "（回复文本会显示在这里）"; return; }
+    el.classList.remove("empty"); el.textContent = txt;
+  }
+
+  // ---------- 按钮 ----------
+  $("btnTts").onclick = function(){
+    var text = $("text").value.trim();
+    if(!text) return;
+    setBusy(true); setReply(""); log("合成请求 · " + text.length + " 字");
+    streamRequest("/api/tts_stream", {text:text}, function(h){
+      $("mSegs").textContent = h.segments;
+      $("voiceHint").textContent = h.voice || "—";
+      setReply(h.text);
+      log("头部到达 · " + h.segments + " 段 · " + (h.voice||""));
+    }).then(function(r){
+      log("完成 · 首响 " + Math.round(r.firstAt) + "ms · 收完 " + Math.round(r.total)
+          + "ms · 音频 " + r.audio.toFixed(2) + "s · " + r.chunks + " 片"
+          + (r.gaps ? " · 断流 " + r.gaps : ""), r.gaps ? "err" : "ok");
+    }).catch(function(e){
+      log("失败 · " + e.message, "err");
+    }).then(function(){ setBusy(false); clearInterval(timer); });
+  };
+
+  $("btnChat").onclick = function(){
+    var text = $("text").value.trim();
+    if(!text) return;
+    setBusy(true); setReply(""); log("对话请求 · " + text.length + " 字（含大脑）");
+    streamRequest("/api/chat_stream", {message:text}, function(h){
+      $("mSegs").textContent = h.segments;
+      $("voiceHint").textContent = h.voice || "—";
+      setReply(h.text);
+      log("大脑已回复 · " + h.text.length + " 字 · " + h.segments + " 段");
+    }).then(function(r){
+      log("完成 · 首响 " + Math.round(r.firstAt) + "ms · 收完 " + Math.round(r.total)
+          + "ms · 音频 " + r.audio.toFixed(2) + "s"
+          + (r.gaps ? " · 断流 " + r.gaps : ""), r.gaps ? "err" : "ok");
+    }).catch(function(e){
+      log("失败 · " + e.message, "err");
+    }).then(function(){ setBusy(false); clearInterval(timer); });
+  };
+
+  $("btnOld").onclick = function(){
+    var text = $("text").value.trim();
+    if(!text) return;
+    setBusy(true); log("旧接口 /api/chat（大脑 + 整段合成，不播放）");
+    oldRequest(text).then(function(r){
+      log("旧接口返回 · " + Math.round(r.total) + "ms（这一刻才有声音）", "ok");
+    }).catch(function(e){
+      log("失败 · " + e.message, "err");
+    }).then(function(){ setBusy(false); });
+  };
+
+  $("btnStop").onclick = function(){
+    player.release(); clearInterval(timer); setBusy(false); log("已停止");
+  };
+
+  // 环境自检
+  fetch("/api/health", {cache:"no-store"}).then(function(r){ return r.json(); }).then(function(j){
+    $("voiceHint").textContent = (j.voice_label || j.voice || "—") + " · " + (j.engine || "");
+    log("后端在线 · 引擎 " + j.engine + " · 语速 " + j.speech_rate + " · " + (j.voice||""));
+    if(j.engine !== "volc"){
+      log("注意：当前引擎不是 volc，流式接口仍会直接调豆包（可能没配置 key）", "err");
+    }
+  }).catch(function(){ log("后端未响应", "err"); });
+
+  // ?run=1：打开即自动跑一遍（无头验收，或从收藏链接直接复现同一段）
+  if(/[?&]run=1/.test(location.search)){
+    var q = new URLSearchParams(location.search).get("text");
+    if(q) $("text").value = q;
+    setTimeout(function(){ $("btnTts").click(); }, 400);
+  }
+})();
+</script>
+</body>
+</html>

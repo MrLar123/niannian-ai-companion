@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>念念 · 调色</title>
+<style>
+  :root{ --pink:#EAA7B2; --card:rgba(30,26,34,.94); --ink:#e9e2ea; --dim:#9c94a4; }
+  *{ box-sizing:border-box; }
+  html,body{ margin:0; padding:0; background:transparent; color:var(--ink);
+    font-family:"PingFang SC","Microsoft YaHei",Segoe UI,Arial,sans-serif;
+    font-size:11px; line-height:1.5; user-select:none; -webkit-user-select:none; }
+  #card{ background:var(--card); border:1px solid rgba(234,167,178,.35); border-radius:12px;
+    padding:10px 12px 11px; box-shadow:0 10px 30px rgba(0,0,0,.35); backdrop-filter:blur(6px); }
+  body.embed #card{ border-radius:10px; }
+  h4{ margin:0 0 6px; font-size:11px; font-weight:600; letter-spacing:.4px; color:var(--pink);
+    display:flex; justify-content:space-between; align-items:center; gap:6px; }
+  h4 em{ font-style:normal; font-weight:400; color:var(--dim); font-size:10px;
+    max-width:150px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  select{ width:100%; margin:0 0 7px; background:rgba(0,0,0,.35); color:var(--ink);
+    border:1px solid rgba(255,255,255,.14); border-radius:6px; padding:3px 4px; font-size:10px; }
+  body.embed select{ display:none; }
+  .row{ display:flex; align-items:center; gap:6px; margin:2px 0; }
+  .row label{ flex:0 0 58px; color:#cdc5d0; }
+  .row input[type=range]{ flex:1 1 0; min-width:0; height:14px; accent-color:var(--pink); }
+  .row b{ flex:0 0 34px; text-align:right; font-weight:500; font-variant-numeric:tabular-nums; color:#fff; }
+  .btns{ display:flex; gap:6px; margin-top:9px; }
+  button{ flex:1; background:rgba(234,167,178,.16); color:#f3ecf2;
+    border:1px solid rgba(234,167,178,.4); border-radius:7px; padding:4px 0;
+    font-size:10px; cursor:pointer; font-family:inherit; }
+  button:hover{ background:rgba(234,167,178,.3); }
+  button.pri{ background:rgba(234,167,178,.34); }
+  #hint{ margin-top:7px; font-size:9.5px; color:var(--dim); line-height:1.45; }
+  #hint b{ color:var(--pink); font-weight:500; }
+  #msg{ margin-top:5px; font-size:9.5px; color:#8fd6a4; min-height:13px; }
+  #msg.err{ color:#f08a8a; }
+</style>
+</head>
+<body>
+<div id="card">
+  <h4>调色 · 亮度/饱和度<em id="who">读取中…</em></h4>
+  <select id="pick"></select>
+  <div id="rows"></div>
+  <div class="btns">
+    <button id="save" class="pri">保存为该形象默认</button>
+    <button id="reset">复原</button>
+  </div>
+  <div id="hint">只写 <b>model.json</b> 的 params，<b>不动动作库</b>（assets/motions 一个字节都不改）。</div>
+  <div id="msg"></div>
+</div>
+<script>
+/* 面板只做一件事：把四个颜色参数发给 /api/grade。
+   画面那边（desktoppmx.html）自己轮询 seq，所以这里不需要跟它通信。 */
+const Q = new URLSearchParams(location.search);
+const EMBED = Q.has('embed');
+if (EMBED) document.body.classList.add('embed');
+
+const ROWS = [
+  ['bright',   '亮度',   0.60, 1.60, 0.01, 2],
+  ['saturate', '饱和度', 0.30, 3.00, 0.01, 2],
+  ['contrast', '对比度', 0.30, 3.00, 0.01, 2],
+  ['gamma',    '伽马',   0.40, 1.60, 0.01, 2],
+];
+const rowsEl = document.getElementById('rows');
+const pickEl = document.getElementById('pick');
+const whoEl  = document.getElementById('who');
+const msgEl  = document.getElementById('msg');
+const inputs = {};
+
+let MODELS = [], KEY = '', P = {}, DEF = {}, LOCKED = false, timer = null;
+
+function say(t, err){ msgEl.textContent = t || ''; msgEl.className = err ? 'err' : ''; }
+
+for (const [key, label, min, max, step, dec] of ROWS) {
+  const r = document.createElement('div'); r.className = 'row';
+  const lb = document.createElement('label'); lb.textContent = label;
+  const ip = document.createElement('input');
+  ip.type = 'range'; ip.min = min; ip.max = max; ip.step = step; ip.value = 1;
+  const bv = document.createElement('b'); bv.textContent = '1.00';
+  ip.addEventListener('input', () => {
+    P[key] = parseFloat(ip.value);
+    bv.textContent = P[key].toFixed(dec);
+    push(false);
+  });
+  r.append(lb, ip, bv);
+  rowsEl.appendChild(r);
+  inputs[key] = { ip, bv, dec };
+}
+
+function syncUI(){
+  for (const [key, , , , , dec] of ROWS){
+    const v = typeof P[key] === 'number' ? P[key] : 1;
+    inputs[key].ip.value = v;
+    inputs[key].bv.textContent = (+v).toFixed(dec);
+  }
+}
+
+function push(save){
+  clearTimeout(timer);
+  timer = setTimeout(async () => {
+    try {
+      const r = await fetch('/api/grade', { method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ model: KEY, params: P, save: !!save }) });
+      const j = await r.json();
+      if (!j || !j.ok) { say((j && j.error) || '保存失败', true); return; }
+      if (save) say(j.saved ? '已保存：下次打开这个形象就是这个颜色' : ('未保存：' + (j.error || '没有 model.json')), !j.saved);
+      else say('');
+    } catch (e) { say('连不上后端（8090 没起？）', true); }
+  }, save ? 0 : 70);
+}
+
+async function loadGrade(){
+  try {
+    const j = await (await fetch('/api/grade?model=' + encodeURIComponent(KEY), { cache:'no-store' })).json();
+    if (!j || !j.ok) { say('读不到参数', true); return; }
+    DEF = j.defaults || {};
+    P = Object.assign({}, j.params || {});
+    syncUI();
+    say('');
+  } catch (e) { say('连不上后端（8090 没起？）', true); }
+}
+
+function setKey(k){
+  KEY = k;
+  const m = MODELS.find(m => m.key === k);
+  whoEl.textContent = m ? m.label : k;
+  whoEl.title = k;
+  if (pickEl.value !== k) pickEl.value = k;
+  loadGrade();
+}
+
+(async function init(){
+  const want = (Q.get('model') || '').trim();
+  try {
+    const j = await (await fetch('/api/models', { cache:'no-store' })).json();
+    MODELS = j.models || [];
+    for (const m of MODELS){
+      const o = document.createElement('option');
+      o.value = m.key; o.textContent = m.label || m.key;
+      pickEl.appendChild(o);
+    }
+    LOCKED = !!want && MODELS.some(m => m.key === want);
+    pickEl.disabled = LOCKED;
+    setKey(LOCKED ? want : (MODELS.some(m => m.key === j.current) ? j.current : (MODELS[0] || {}).key || ''));
+  } catch (e) {
+    whoEl.textContent = '读不到模型清单';
+    say('后端没起？先启动小芸桌面', true);
+  }
+})();
+
+pickEl.addEventListener('change', () => { if (!LOCKED) setKey(pickEl.value); });
+
+document.getElementById('reset').addEventListener('click', () => {
+  P = Object.assign({}, DEF);
+  syncUI(); push(false); say('已复原到默认（还没保存）');
+});
+document.getElementById('save').addEventListener('click', () => push(true));
+</script>
+</body>
+</html>

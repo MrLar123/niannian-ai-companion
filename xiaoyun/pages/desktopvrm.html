@@ -1,0 +1,2128 @@
+<!DOCTYPE html>
+<html style="margin:0;padding:0;">
+<head>
+<meta charset="UTF-8">
+<title>念念 VRM</title>
+<style>
+  :root{ --pink:#EAA7B2; --ink:#2a2230; }
+  *{ box-sizing:border-box; }
+  /* 页面必须保持真透明：桌面壳把 WinForms 窗体底色刷成色键色（见 desktop_app.py 的 KEY_COLOR）。
+     渲染器 alpha:true + 清屏透明度 0，这里再透一层就干净了。 */
+  html,body{
+    margin:0; padding:0; width:100%; height:100%; overflow:hidden;
+    background:transparent;
+    font-family:"PingFang SC","Microsoft YaHei",Segoe UI,Arial,sans-serif;
+    user-select:none; -webkit-user-select:none; cursor:default;
+  }
+  #stage{ position:absolute; inset:0; }
+  #stage canvas{ display:block; width:100% !important; height:100% !important; }
+
+  #bubble{ position:absolute; left:50%; top:14px; transform:translate(-50%,8px);
+    max-width:88%; z-index:20; opacity:0; transition:opacity .25s,transform .25s;
+    background:rgba(255,255,255,.95); border:1px solid rgba(217,120,145,.45);
+    border-radius:16px; padding:11px 15px; font-size:14px; line-height:1.6; color:var(--ink);
+    box-shadow:0 6px 22px rgba(217,120,145,.28); pointer-events:none; }
+  #bubble.show{ opacity:1; transform:translate(-50%,0); }
+  #bubble:after{ content:""; position:absolute; left:50%; bottom:-9px; margin-left:-8px;
+    border:9px solid transparent; border-top-color:rgba(255,255,255,.95); border-bottom:0; }
+
+  #tip{ position:absolute; left:0; right:0; bottom:4px; text-align:center; z-index:15;
+    font-size:11px; color:#8a7d8c; opacity:0; transition:opacity .6s; pointer-events:none;
+    text-shadow:0 1px 3px rgba(255,255,255,.95); }
+
+  /* ---- 思考中指示（P3 DSH：大脑真状态，/api/brain/state 轮询驱动） ---- */
+  #think{ position:absolute; left:50%; top:14px; transform:translate(-50%,8px);
+    z-index:21; opacity:0; transition:opacity .25s,transform .25s;
+    background:rgba(255,255,255,.92); border:1px solid rgba(150,120,180,.38);
+    border-radius:14px; padding:6px 12px; font-size:12px; color:#6b5f7a;
+    box-shadow:0 4px 14px rgba(120,100,170,.18); pointer-events:none; }
+  #think.show{ opacity:1; transform:translate(-50%,0); }
+  #think .dot{ display:inline-block; width:5px; height:5px; margin:0 2px;
+    border-radius:50%; background:#9c8fc0; animation:thinkpulse 1.1s infinite; }
+  #think .dot:nth-child(2){ animation-delay:.18s }
+  #think .dot:nth-child(3){ animation-delay:.36s }
+  @keyframes thinkpulse{ 0%,60%,100%{opacity:.25; transform:translateY(0)}
+    30%{opacity:1; transform:translateY(-3px)} }
+
+  /* ---- 语音对话控件（与 desktoppmx 完全同款：右对齐防漂移布局） ---- */
+  #voice{ position:absolute; right:19%; bottom:12px; z-index:30;
+    display:flex; flex-direction:column; align-items:flex-end; gap:6px; }
+  #micWrap{ position:relative; width:38px; height:38px; }
+  #mic{ width:38px; height:38px; border-radius:50%; cursor:pointer;
+    border:1px solid rgba(217,120,145,.55); background:rgba(255,255,255,.92);
+    box-shadow:0 3px 12px rgba(217,120,145,.3); display:flex; align-items:center;
+    justify-content:center; font-size:17px; color:#c25c78; padding:0;
+    transition:transform .15s, background .2s; pointer-events:auto; }
+  #mic:hover{ transform:scale(1.08); }
+  #mic:active{ transform:scale(0.94); }
+  #mic.on{ background:#e05a76; color:#fff; border-color:#e05a76;
+    animation:pulse 1.1s ease-in-out infinite; }
+  #mic.busy{ background:#f3d9a0; border-color:#e0b45f; color:#8a6a1f;
+    animation:busypulse 1.8s ease-in-out infinite; }
+  @keyframes busypulse{
+    0%,100%{ box-shadow:0 0 0 0 rgba(224,180,95,.55); }
+    50%{ box-shadow:0 0 0 7px rgba(224,180,95,0); }
+  }
+  @keyframes pulse{
+    0%,100%{ box-shadow:0 0 0 0 rgba(224,90,118,.55), 0 3px 12px rgba(217,120,145,.3); }
+    50%{ box-shadow:0 0 0 9px rgba(224,90,118,0), 0 3px 12px rgba(217,120,145,.3); }
+  }
+  #micRing{ position:absolute; left:50%; top:50%; width:38px; height:38px;
+    margin-left:-19px; margin-top:-19px; border-radius:50%;
+    border:2px solid rgba(224,90,118,.95); opacity:0; transform:scale(1);
+    pointer-events:none; }
+  #micRing.live{ opacity:1; }
+  #vmode{ font-size:10px; color:#8a7d8c; background:rgba(255,255,255,.85);
+    border:1px solid rgba(217,120,145,.35); border-radius:9px; padding:2px 7px;
+    cursor:pointer; pointer-events:auto; user-select:none; white-space:nowrap; }
+  #vstat{ font-size:11px; color:#a08a97; max-width:150px; text-align:center;
+    line-height:1.35; pointer-events:none; min-height:14px; }
+  #vstat.wait{ color:#b0762f; font-weight:600; }
+  #vstat.slow{ color:#c25c1f; font-weight:600; animation:slowblink 1.6s ease-in-out infinite; }
+  @keyframes slowblink{ 0%,100%{opacity:.55;} 50%{opacity:1;} }
+  #vstat.on{ color:#d24a66; font-weight:600; }
+  #vstat.err{ color:#c0392b; font-weight:600; }
+  /* 预览窗（?model= / ?tune）：没有语音服务，别显示麦克风和它的报错 */
+  body.preview #voice{ display:none; }
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "three": "/assets/lib/three.module.js",
+    "three/addons/": "/assets/lib/addons/",
+    "@pixiv/three-vrm": "/assets/lib/vrm/three-vrm.module.js"
+  }
+}
+</script>
+</head>
+<body>
+
+  <div id="stage"></div>
+  <div id="bubble"></div>
+  <div id="think"></div>
+  <div id="tip">拖动我换位置 · 点我打开聊天</div>
+
+  <!-- 语音对话：麦克风按钮 + 模式切换 + 状态 -->
+  <div id="voice">
+    <div id="vstat"></div>
+    <div id="vmode" title="点击切换语音对话方式">🎙 连续对话</div>
+    <div id="micWrap">
+      <div id="micRing"></div>
+      <div id="mic" title="点击开始/结束说话">🎤</div>
+    </div>
+  </div>
+
+<script src="/assets/lipsync/lipsync.js"></script>
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { MMDLoader } from 'three/addons/loaders/MMDLoader.js';
+import { VRMLoaderPlugin, VRMUtils, MToonMaterialLoaderPlugin } from '@pixiv/three-vrm';
+
+/* ===================== 前端触发事件日志（与 desktoppmx 同款） ===================== */
+window.xiaoyunEvents = window.xiaoyunEvents || [];
+function xlog(type, detail){
+  try{
+    window.xiaoyunEvents.push({ t: Date.now(), type: type, detail: detail || '' });
+    if (window.xiaoyunEvents.length > 400) window.xiaoyunEvents.shift();
+    try{ console.log('[念念]', type, detail || ''); }catch(e){}
+    fetch('/api/event', { method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ src:'页', type: type, detail: String(detail || '') })
+    }).catch(function(){});
+  }catch(e){}
+}
+window.xiaoyunLog = xlog;
+
+let shellOnline = false;
+function hasShell(){
+  if (shellOnline) return true;
+  try{ return !!(window.pywebview && window.pywebview.api); }
+  catch(e){ return false; }
+}
+
+/* ===================== 观感参数（模型定档：小芸 VRM1.0 T-pose） ===================== */
+const _q = new URLSearchParams(location.search);
+/* 形象不再写死：启动时从 /api/models 取当前选择（右键菜单/托盘切换后轮询跟随）。
+   ?model= 用于单模型预览（可传 key，也可直接传 /assets/xxx.vrm 路径）。 */
+let MODEL_URL = '/assets/小芸.vrm';     // 兜底：后端取不到时用它
+let CUR_MODEL_KEY = '';                 // 后端 current（用于检测切换）
+let LOCK_MODEL = false;                 // ?model= 指定后不再跟随后端切换
+const YAW       = 0;
+let MARGIN    = 1.12;   // 留白：1.0 = 头顶脚底刚好顶满窗口；1.12 略留气口
+/* 现场微调入口：?margin=1.06 拉近 / ?nudgeY=-0.02 下沉（单位=身高占比） */
+if (_q.get('margin')) MARGIN = parseFloat(_q.get('margin')) || MARGIN;
+let NUDGE_X   = 0.0;
+let NUDGE_Y   = 0.0;    // 负值会把她往下推、脚被窗口切掉
+/* 压臂角不再写死：加载后按 (手-上臂) 世界向量实测（见加载回调 armDrop()）。
+   T-pose rest（本模型）→ 实测 ≈1.2rad 自动压下；垂臂 rest（旧模型）→ ≈0 免压。 */
+let ARM_DROP_L = 0.0, ARM_DROP_R = 0.0;
+/* 压臂应用方式（loadVRM 按 rest pose 四元数自动判定，见 armAxisMode 块）：
+   'euler'=VRoid 系 rest≈单位四元数，欧拉叠加可用；'quat'=Avaturn/Mixamo 系
+   rest 非平凡，欧拉叠加被吃掉，必须四元数后乘。 */
+let armAxisMode = 'euler';
+/* quat 模式压臂：不再"猜轴转固定角"（该骨骼局部系相对世界有扭转，绕局部 Z
+   转 70° 实际只压下约 40°，标量换算失真）。改为加载时实测纠正四元数：
+   把 (手-上臂) 世界方向旋到竖直向下，换算到父级空间存 ARM_FIX_Q，
+   渲染时按 ARM_DROP/实测全角 slerp 后 premultiply（2026-10-23 上午修复）。 */
+const ARM_FIX_Q = {};            // key -> { q:父级空间纠正四元数, full:与竖直夹角(rad) }
+/* 舞蹈基准压臂量 = ARM_DROP - MMD_REST_DROP（下限 0）。
+   armDrop() 实测时已经预留 0.35rad（≈MMD rest 手臂离竖直的余角），
+   即 ARM_DROP 本身就是「T-pose → MMD rest」的量 → 默认扣减 0。
+   ?mmdrest=<rad> 仍可调（值越大手臂抬得越高）。 */
+let MMD_REST_DROP = (() => {
+  const v = parseFloat(_q.get('mmdrest'));
+  return isFinite(v) ? Math.max(0, v) : 0;
+})();
+/* VMD 旋转叠加方式（?armmode= 可切，验证后定默认）：
+   0 = 旧：仅上臂 premultiply 裸 dq，其余骨 post-multiply（手腕拧错的版本）
+   1 = 新：MMD 语义推导 q_b = Wp⁻¹·dq·Wp·base（Wp=基准姿态父链世界旋转，
+       加载时缓存），对所有轨道骨统一共轭 premultiply。推导：
+       MMD 骨无 rest 旋转，VMD 旋转施加在「父骨累积系」=世界系；
+       目标骨世界旋转 W = F_b·W_base_b（F 为链上 dq 累积），
+       与 W = P·q 联立，F_parent 恰好消掉 → 上式，父骨动不动都成立。 */
+const ARMMODE = (() => {
+  const v = parseInt(_q.get('armmode'), 10);
+  return isFinite(v) ? v : 1;
+})();
+const _armTmpQ = new THREE.Quaternion();
+const _armY    = new THREE.Quaternion();   // danceTick 用：局部空间压臂旋转 home⁻¹·X·home
+const _armIdQ  = new THREE.Quaternion();
+function applyArmFix(ua, key, swayZ) {
+  const f = ARM_FIX_Q[key];
+  if (!f) return;
+  /* 每帧必须先复位到 rest 再叠纠正，否则 premultiply 逐帧累积、手臂绕锥面打转 */
+  ua.quaternion.copy(f.rest);
+  const adVal = key === 'leftUpperArm' ? ARM_DROP_L : ARM_DROP_R;
+  const frac = Math.min(1, Math.max(0, adVal / Math.max(f.full, 1e-3)));
+  if (frac <= 0) {
+    if (swayZ) ua.quaternion.multiply(_armQz.setFromAxisAngle(_armZAxis, swayZ));
+    return;
+  }
+  _armTmpQ.copy(_armIdQ).slerp(f.q, frac);
+  ua.quaternion.premultiply(_armTmpQ);
+  if (swayZ) ua.quaternion.multiply(_armQz.setFromAxisAngle(_armZAxis, swayZ));
+}
+const _armQz = new THREE.Quaternion();
+const _armZAxis = new THREE.Vector3(0, 0, 1);
+/* 皮肤暖色调制（本模型贴图白底，亮区会顶到纯白，见 2026-10-21 排查记录）。
+   Body 重系数（无五官不怕脏），Face 轻系数保五官干净。?skin=0 可关。 */
+const SKIN_FIX_ON = _q.get('skin') !== '0';
+
+/* 预览窗（?model= 强制指定）：不显示语音控件，锁死模型。
+   值可以是 key（如 小芸-jk）也可以是路径（如 /assets/xxx.vrm）。 */
+const PREVIEW_MODEL = (_q.get('model') || '').trim();
+if (PREVIEW_MODEL) { document.body.classList.add('preview'); LOCK_MODEL = true; }
+
+/* ===================== 渲染器 / 相机 / 灯光 ===================== */
+const stage    = document.getElementById('stage');
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.setClearColor(0x000000, 0);         // 背景全透明
+stage.appendChild(renderer.domElement);
+
+const scene  = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(34, innerWidth / innerHeight, 0.01, 200);
+
+// VRM 正面光：柔和三点光（与 bjd3dvr 同配比）
+scene.add(new THREE.HemisphereLight(0xffffff, 0x9aa4b8, 1.4));
+const keyL  = new THREE.DirectionalLight(0xffffff, 1.8); keyL.position.set(1.2, 1.8, 2.4);  scene.add(keyL);
+const fillL = new THREE.DirectionalLight(0xffffff, 0.9); fillL.position.set(-2.0, 1.0, 1.6); scene.add(fillL);
+const rimL  = new THREE.DirectionalLight(0xcdd9ff, 1.2); rimL.position.set(-0.4, 1.2, -2.4); scene.add(rimL);
+
+let vrm = null, rig = null, baseX = 0, baseY = 0, baseH = 1, fitting = false;
+let boneHome = null;
+const t0 = performance.now();
+let _lastFrameMs = t0;   // 上一帧时间戳，用来算 vrm.update 的 deltaTime
+
+function syncSize() {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+}
+
+function report(msg) {
+  new Image().src = '/api/3dprobe?d=' + encodeURIComponent(msg).replace(/%20/g, '+');
+}
+
+/* ===================== 自动取景（屏幕剪影收敛法，带抽样优化） ===================== */
+let _fitBuf = null, _fitBufLen = 0;
+const PIX_STRIDE = 2;
+
+function screenSilhouette() {
+  const gl = renderer.getContext();
+  const W = renderer.domElement.width, H = renderer.domElement.height;
+  const need = W * H * 4;
+  if (!_fitBuf || _fitBufLen < need) { _fitBuf = new Uint8Array(need); _fitBufLen = need; }
+  const buf = _fitBuf;
+  gl.readPixels(0, 0, W, H, gl.RGBA, gl.UNSIGNED_BYTE, buf);
+  let x0 = 1e9, x1 = -1, y0 = 1e9, y1 = -1;
+  for (let y = 0; y < H; y += PIX_STRIDE) {
+    const rb = (H - 1 - y) * W * 4;
+    for (let x = 0; x < W; x += PIX_STRIDE) {
+      if (buf[rb + x * 4 + 3] > 8) {
+        if (x < x0) x0 = x; if (x > x1) x1 = x;
+        if (y < y0) y0 = y; if (y > y1) y1 = y;
+      }
+    }
+  }
+  if (x1 >= 0) { x0 -= PIX_STRIDE; x1 += PIX_STRIDE; y0 -= PIX_STRIDE; y1 += PIX_STRIDE; }
+  return { x0, x1, y0, y1, W, H };
+}
+
+let _fitTimer = null, _fitLast = 0;
+function scheduleFit(delay) {
+  const since = performance.now() - _fitLast;
+  const d = Math.max(delay || 0, since < 350 ? 350 - since : 0);
+  if (_fitTimer) clearTimeout(_fitTimer);
+  _fitTimer = setTimeout(() => { _fitTimer = null; _fitLast = performance.now(); autofit(); }, d);
+}
+
+function autofit() {
+  if (!rig) return;
+  fitting = true;
+  try {
+    syncSize();
+    const fov = camera.fov * Math.PI / 180;
+    const tan = Math.tan(fov / 2);
+    rig.rotation.y = YAW;
+    rig.position.set(0, 0, 0);
+    rig.updateWorldMatrix(true, true);
+
+    /* 第一步：用包围盒做「保守」机位 —— 保证第一批渲染绝不裁切。
+       注意 蒙皮网格的 Box3 只反映绑定姿态（T-pose）：压臂后实际比 0.85 窄得多，
+       所以包围盒只能用来定一个安全距离，不能用它直接算最终取景。 */
+    const box = new THREE.Box3().setFromObject(rig);
+    const size = box.getSize(new THREE.Vector3());
+    const center = box.getCenter(new THREE.Vector3());
+    baseX = -center.x;
+    baseY = -center.y;
+    rig.position.set(baseX, baseY, 0);
+
+    const dH = (size.y * MARGIN / 2) / tan;          // 高度装得下
+    const dW = (size.x * 1.02 / 2) / (tan * camera.aspect);  // 宽度装得下（T-pose 偏宽 → 偏保守）
+    let dist = Math.max(0.05, dH, dW) * 1.06;
+    camera.position.set(0, 0, dist);
+    camera.lookAt(0, 0, 0);
+    renderer.render(scene, camera);
+
+    /* 第二步：量真实剪影（这里吃的就是压臂后的姿态），一次解析求出最终距离。
+       取景目标：高度占 (1/MARGIN) 的窗口高，同时左右各留 1% 边距。 */
+    const s = screenSilhouette();
+    if (s.x1 > s.x0 && s.y1 > s.y0) {
+      const hPx = s.y1 - s.y0 + 1;
+      const wPx = s.x1 - s.x0 + 1;
+      const kW = Math.min((s.H / MARGIN) / hPx, (s.W / 1.02) / wPx);
+      dist = Math.max(0.05, dist / kW);
+
+      /* 剪影相对画布中心的偏移，换算成世界单位后修正位置。
+         方向：世界 +x = 屏幕右、世界 +y = 屏幕上；剪影偏右/偏下就把机身往左/上挪。 */
+      const pxPerWorld = s.H / (2 * dist * tan);
+      baseX -= ((s.x0 + s.x1) / 2 - s.W / 2) / pxPerWorld;
+      baseY += ((s.y0 + s.y1) / 2 - s.H / 2) / pxPerWorld;
+      rig.position.set(baseX, baseY, 0);
+    }
+    camera.position.set(0, 0, dist);
+    camera.lookAt(0, 0, 0);
+
+    /* 手动微调（?nudge 或改常量），单位=身高占比 */
+    if (NUDGE_X || NUDGE_Y) {
+      baseX += NUDGE_X * size.y;
+      baseY += NUDGE_Y * size.y;
+      rig.position.set(baseX, baseY, 0);
+    }
+    renderer.render(scene, camera);
+    const v = screenSilhouette();
+    baseH = size.y;
+    report('vrmfit h=' + size.y.toFixed(3) + ' d=' + dist.toFixed(3) +
+           ' cov=' + ((v.y1 - v.y0 + 1) / v.H * 100).toFixed(1) + '%' +
+           ' edge=' + ((v.x0 <= 1 || v.x1 >= v.W - 2 || v.y0 <= 1 || v.y1 >= v.H - 2) ? 'CLIP' : 'ok'));
+  } catch (e) {
+    report('vrmfiterr ' + (e && e.message ? e.message : e));
+  } finally {
+    fitting = false;   // 无论异常与否都复位，否则动画永久暂停
+  }
+}
+
+/* ===================== 眨眼驱动（VRM 表情版） =====================
+   本模型有标准 VRM blink 表情，直接走 expressionManager。
+   URL: ?blink=1 常闭（截图用）/ ?blink=0 不眨 */
+const BLINK_MODE = _q.get('blink');
+let BLINK_DUR = 0.18;
+let BLINK_AMP = 0.74;
+let BLINK_GAP_MIN = 2.0, BLINK_GAP_MAX = 4.5;
+let DOUBLE_CHANCE = 0.30;
+let blinkStart = -1, nextBlink = 1.0 + Math.random() * 1.5;
+
+function blinkWeight(t) {
+  if (blinkStart < 0) return 0;
+  const p = (t - blinkStart) / BLINK_DUR;
+  if (p <= 0 || p >= 1) return 0;
+  return p < 0.42 ? (p / 0.42) : (1 - (p - 0.42) / 0.58);
+}
+
+function driveBlink(t) {
+  const em = vrm && vrm.expressionManager;
+  if (!em) return;
+  try {
+    if (BLINK_MODE === '1') { em.setValue('blink', 1); return; }
+    if (BLINK_MODE === '0') { em.setValue('blink', 0); return; }
+    if (blinkStart < 0 && t >= nextBlink) blinkStart = t;
+    if (blinkStart >= 0 && t - blinkStart >= BLINK_DUR) {
+      blinkStart = -1;
+      if (Math.random() < DOUBLE_CHANCE) { blinkStart = t + 0.03; nextBlink = t + 0.6; }
+      else nextBlink = t + BLINK_GAP_MIN + Math.random() * (BLINK_GAP_MAX - BLINK_GAP_MIN);
+    }
+    em.setValue('blink', Math.min(1, blinkWeight(t) * BLINK_AMP));
+  } catch (e) { /* 模型没有 blink 表情时静默跳过 */ }
+}
+
+/* 口型：VRM 预设 aa/iu/ou/eo/oh 表情映射五元音权重。
+   渲染循环里每帧应用（在 driveBlink 之后），权重来自 window.__xyLip.weights。 */
+const MOUTH_EXPR = { a: 'aa', i: 'ih', u: 'ou', e: 'ee', o: 'oh' };
+const MOUTH_GAIN = [1.25, 1.75, 1.45, 1.50, 1.35];   // a i u e o
+function driveMouth() {
+  const em = vrm && vrm.expressionManager;
+  if (!em) return;
+  const mo = window.__xyMouthOverride;
+  const w = mo || (window.__xyLip && window.__xyLip.weights);
+  if (!w) return;
+  const names = ['a', 'i', 'u', 'e', 'o'];
+  for (let vi = 0; vi < 5; vi++) {
+    try { em.setValue(MOUTH_EXPR[names[vi]], Math.min(1, (w[names[vi]] || 0) * MOUTH_GAIN[vi])); }
+    catch (e) {}
+  }
+}
+
+/* ===================== 待机动作 ===================== */
+/* 记录基准姿态的骨骼。眼球必须在内：眼神追随写的是 leftEye/rightEye，
+   不在表里会因缺 home 被 set2 早退（实测踩过）。 */
+const HUMAN_BONES = ['hips','spine','chest','upperChest','neck','head',
+                     'leftEye','rightEye',
+                     'leftShoulder','leftUpperArm','leftLowerArm','leftHand',
+                     'rightShoulder','rightUpperArm','rightLowerArm','rightHand',
+                     'leftUpperLeg','leftLowerLeg','leftFoot',
+                     'rightUpperLeg','rightLowerLeg','rightFoot'];
+
+const ACT = {
+  head:    0.038,
+  armX:    0.050,
+  armZ:    0.018,
+  elbow:   0.035,
+  leg:     0.021,
+  breath:  0.0035,
+};
+
+function animateBones(t) {
+  if (!vrm || !vrm.humanoid || !boneHome) return;
+  const H = vrm.humanoid;
+  const get = (nm) => (H.getRawBoneNode ? H.getRawBoneNode(nm) : H.getNormalizedBoneNode(nm));
+  const br  = Math.sin(t * 1.4);
+  const arm = Math.sin(t * 0.9);
+  const armZ = Math.sin(t * 0.7 + 1.3);
+  const look = Math.sin(t * 0.35);
+  const wgt = Math.sin(t * 0.45);
+
+  rig.scale.setScalar(1 + br * ACT.breath);
+
+  const set = (nm, x, y, z) => {
+    const b = get(nm);
+    if (!b) return;
+    const home = boneHome[nm];
+    b.rotation.set(home.rx + x, home.ry + y, home.rz + z);
+  };
+  const lock = (nm) => {
+    const b = get(nm);
+    if (!b) return;
+    const h = boneHome[nm];
+    if (h) b.rotation.set(h.rx, h.ry, h.rz);
+  };
+
+  set('neck', 0, look * ACT.head, 0);
+  lock('head');
+
+  if (armAxisMode === 'quat') {
+    /* Avaturn/Mixamo 系：rest 四元数非平凡，欧拉叠加会被吃掉。
+       用加载时实测的父级空间纠正四元数（把臂世界方向旋到竖直向下），
+       slerp 分数 = ARM_DROP/实测全角，再叠微小摆臂（局部 Z 后乘）。 */
+    const uaL = get('leftUpperArm'), uaR = get('rightUpperArm');
+    if (uaL) applyArmFix(uaL, 'leftUpperArm', armZ * ACT.armZ);
+    if (uaR) applyArmFix(uaR, 'rightUpperArm', armZ * ACT.armZ);
+    set('leftLowerArm',  -0.05 - arm * ACT.elbow, 0, 0);
+    set('rightLowerArm', -0.05 + arm * ACT.elbow, 0, 0);
+  } else {
+    set('leftUpperArm',  arm * ACT.armX, 0, -ARM_DROP_L + armZ * ACT.armZ);
+    set('rightUpperArm', -arm * ACT.armX, 0,  ARM_DROP_R + armZ * ACT.armZ);
+    set('leftLowerArm',  -0.05 - arm * ACT.elbow, 0, 0);
+    set('rightLowerArm', -0.05 + arm * ACT.elbow, 0, 0);
+  }
+
+  set('leftUpperLeg',  wgt * ACT.leg, 0, 0);
+  set('rightUpperLeg', -wgt * ACT.leg, 0, 0);
+  lock('leftLowerLeg'); lock('rightLowerLeg');
+  lock('leftFoot');     lock('rightFoot');
+
+  for (const nm of ['hips','spine','chest','upperChest',
+                    'leftShoulder','rightShoulder']) lock(nm);
+}
+
+const STATIC_POSE = _q.has('static');
+
+/* ===================== VMD 动作（MMD 舞蹈） =====================
+   动作库是 MMD 的 .vmd（日文骨名、MMD 左手坐标系），VRM 是英文 humanoid 骨。
+   所以不能直接 AnimationMixer 播——那条路需要同名骨骼。
+   做法：自己解析 VMD 关键帧，按 VMD_BONE_MAP 映射到 VRM 骨，逐帧插值写骨骼
+   quaternion/position。好处是：
+     · 只驱动映射表里有的骨（手指/裙摆/尾巴等 MMD 专有骨自动忽略，不会错位）
+     · 与待机 animateBones 互斥（dance 播的时候锁住待机）
+     · 腿的 IK（足ＩＫ）不参与——直接跳过的代价是脚步不贴地，
+       但这些舞蹈主要在原地扭，实测观感可接受；要贴地得解算 IK，代价大。
+   坐标系：parseVmd(buf, true) 已把左手系转右手（quaternion x/y 取负），
+   所以这里拿到的是 three.js 右手系四元数，可直接用。 */
+const VMD_BONE_MAP = {
+  /* 躯干 */
+  'センター': 'hips', 'グルーブ': 'hips', '腰': 'hips',
+  '上半身': 'spine', '上半身2': 'chest', '上半身3': 'upperChest',
+  '下半身': 'hips',
+  '首': 'neck', '頭': 'head',
+  '両目': 'head',                       // 眼球由 gaze 控制，这里只让它跟随头部
+  '右目': 'rightEye', '左目': 'leftEye',
+  /* 肩臂（MMD 的肩P/腕捩 是辅助骨，没有对应 humanoid 骨，丢弃） */
+  '右肩': 'rightShoulder', '左肩': 'leftShoulder',
+  '右腕': 'rightUpperArm', '左腕': 'leftUpperArm',
+  '右ひじ': 'rightLowerArm', '左ひじ': 'leftLowerArm',
+  '右手首': 'rightHand', '左手首': 'leftHand',
+  /* 腿（足ＩＫ/つま先ＩＫ 略过） */
+  '右足': 'rightUpperLeg', '左足': 'leftUpperLeg',
+  '右ひざ': 'rightLowerLeg', '左ひざ': 'leftLowerLeg',
+  '右足首': 'rightFoot', '左足首': 'leftFoot',
+  /* 手指：MMD 「１/２/３」= Proximal/Intermediate/Distal，MToon VRM 命名一致 */
+  '右親指０': 'rightThumbMetacarpal', '右親指１': 'rightThumbProximal',
+  '右親指２': 'rightThumbDistal',
+  '左親指０': 'leftThumbMetacarpal', '左親指１': 'leftThumbProximal',
+  '左親指２': 'leftThumbDistal',
+};
+(function buildFingerMap() {
+  const fingers = [['人指', 'Index'], ['中指', 'Middle'], ['薬指', 'Ring'], ['小指', 'Little']];
+  const segs = [['１', 'Proximal'], ['２', 'Intermediate'], ['３', 'Distal']];
+  for (const [jp, en] of fingers) {
+    for (const [num, seg] of segs) {
+      VMD_BONE_MAP['右' + jp + num] = 'right' + en + seg;
+      VMD_BONE_MAP['左' + jp + num] = 'left' + en + seg;
+    }
+  }
+})();
+
+/* 动作状态机。dance.active=true 时渲染循环跳过 animateBones，
+   改由 danceTick 写骨骼（否则两套动作每帧互相覆盖）。 */
+const dance = {
+  active: false,
+  key: 'idle',
+  clip: null,          // { tracks: { boneName: { times:[], quat:[[x,y,z,w]...], pos:[...]|null } }, duration }
+  startMs: 0,
+  loop: true,
+  vmdLoader: null,
+  cache: {},           // key -> 解析结果，切回来不用重新下载
+
+  stop: function () {
+    this.active = false; this.clip = null; this.key = 'idle';
+  },
+  play: function (key) {
+    if (this.key === key && this.active) return;
+    const cached = this.cache[key];
+    if (cached) { this.clip = cached; this.key = key; this.active = true; this.startMs = performance.now(); return; }
+    if (!this.vmdLoader) this.vmdLoader = new MMDLoader();
+    const url = '/assets/motions/' + encodeURIComponent(key) + '.vmd';
+    this.key = key;
+    this.vmdLoader.loadVMD(url, (vmd) => {
+      if (this.key !== key) return;             // 加载期间又切了别的
+      const clip = buildVmdClip(vmd);
+      this.cache[key] = clip;
+      this.clip = clip;
+      this.active = true;
+      this.startMs = performance.now();
+      report('dance ready key=' + key + ' bones=' + Object.keys(clip.tracks).length +
+             ' dur=' + clip.duration.toFixed(2) + 's');
+    }, undefined, (err) => {
+      report('dance fail key=' + key + ' ' + (err && err.message ? err.message : err));
+    });
+  },
+};
+
+/* VMD -> 轨道。只保留能映射到 VRM humanoid 骨的轨道。 */
+function buildVmdClip(vmd) {
+  const groups = {};
+  const motions = vmd.motions || [];
+  for (let i = 0; i < motions.length; i++) {
+    const mo = motions[i];
+    const target = VMD_BONE_MAP[mo.boneName];
+    if (!target) continue;
+    (groups[target] = groups[target] || []).push(mo);
+  }
+  const tracks = {};
+  let maxTime = 0;
+  for (const boneName in groups) {
+    const arr = groups[boneName].sort((a, b) => a.frameNum - b.frameNum);
+    const times = [], quat = [], pos = [];
+    let hasPos = false;
+    for (const mo of arr) {
+      times.push(mo.frameNum / 30);          // VMD 固定 30fps
+      quat.push([mo.rotation[0], mo.rotation[1], mo.rotation[2], mo.rotation[3]]);
+      const p = mo.position || [0, 0, 0];
+      if (Math.abs(p[0]) > 1e-6 || Math.abs(p[1]) > 1e-6 || Math.abs(p[2]) > 1e-6) hasPos = true;
+      pos.push([p[0], p[1], p[2]]);
+    }
+    if (times.length) maxTime = Math.max(maxTime, times[times.length - 1]);
+    tracks[boneName] = { times, quat, pos: hasPos ? pos : null };
+  }
+  return { tracks, duration: Math.max(0.1, maxTime) };
+}
+
+/* 采样：找相邻两帧线性/球面插值。VMD 自带贝塞尔插值曲线，这里用线性近似
+   （舞蹈关键帧密度高，观感差异很小，换来代码简单可靠）。 */
+const _qa = new THREE.Quaternion(), _qb = new THREE.Quaternion();
+function sampleTrack(tr, t) {
+  const times = tr.times;
+  const n = times.length;
+  if (!n) return null;
+  if (n === 1 || t <= times[0]) return { q: tr.quat[0], p: tr.pos ? tr.pos[0] : null };
+  if (t >= times[n - 1]) return { q: tr.quat[n - 1], p: tr.pos ? tr.pos[n - 1] : null };
+  let lo = 0, hi = n - 1;
+  while (hi - lo > 1) {
+    const mid = (lo + hi) >> 1;
+    if (times[mid] <= t) lo = mid; else hi = mid;
+  }
+  const span = times[hi] - times[lo] || 1e-6;
+  const f = Math.min(1, Math.max(0, (t - times[lo]) / span));
+  _qa.fromArray(tr.quat[lo]);
+  _qb.fromArray(tr.quat[hi]);
+  _qa.slerp(_qb, f);
+  let p = null;
+  if (tr.pos) {
+    const a = tr.pos[lo], b = tr.pos[hi];
+    p = [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f];
+  }
+  return { q: _qa.toArray(), p };
+}
+
+/* 每帧推进舞蹈。返回 true 表示本帧由舞蹈接管（渲染循环据此跳过待机）。
+
+   两个必须处理的差异，否则动作看起来"卡在 T-pose"：
+   ① VMD 是「相对 MMD 静止姿态的增量」。MMD 标准站姿手臂天然下垂约 45°，
+      而 小芸.vrm 的 rest 是 T-pose（手臂水平）——直接拿 rest 当基准，
+      没有手臂轨道的舞蹈（如 nya_fingers 纯手指舞）会一直保持平举。
+      所以基准里要预烘压臂角（ARM_DROP_L/R，加载时实测）。
+   ② 舞蹈通常只驱动部分骨骼。没轨道的骨必须显式写回基准姿态，
+      否则它会停在上一次动作（或 T-pose）的位置，看起来像僵住。
+   因此每帧先给全部 HUMAN_BONES 铺基准，再逐轨道叠加。 */
+const _dq = new THREE.Quaternion();
+const _base = new THREE.Quaternion();
+const _qz = new THREE.Quaternion();
+const _zAxis = new THREE.Vector3(0, 0, 1);
+const _conjQ = new THREE.Quaternion();
+function danceTick(nowMs) {
+  if (!dance.active || !dance.clip || !vrm || !vrm.humanoid) return false;
+  const clip = dance.clip;
+  let t = (nowMs - dance.startMs) / 1000;
+  if (dance.loop && clip.duration > 0.1) t = t % clip.duration;
+  else if (t > clip.duration) { dance.stop(); return false; }
+
+  const H = vrm.humanoid;
+  const get = (nm) => (H.getRawBoneNode ? H.getRawBoneNode(nm) : H.getNormalizedBoneNode(nm));
+
+  /* ---- 1) 全身铺基准姿态（含压臂；手指等非 HUMAN_BONES 骨也复位，防累积） ---- */
+  for (const nm of HUMAN_BONES) {
+    const b = get(nm);
+    const db = DANCE_BASE[nm];
+    if (!b || !db) continue;
+    b.quaternion.copy(db.q);
+    b.position.copy(db.p);
+  }
+  for (const nm of DANCE_FINGER_BONES) {
+    const b = get(nm);
+    const db = DANCE_BASE[nm];
+    if (b && db) b.quaternion.copy(db.q);
+  }
+
+  /* ---- 2) 叠加 VMD 轨道 ---- */
+  for (const boneName in clip.tracks) {
+    const b = get(boneName);
+    if (!b) continue;
+    const s = sampleTrack(clip.tracks[boneName], t);
+    if (!s) continue;
+    _dq.fromArray(s.q);
+    const wp = DANCE_WP[boneName];
+    if (ARMMODE >= 1 && wp) {
+      /* MMD 语义：VMD 旋转施加在父骨累积系（=加载时缓存的基准姿态父链世界系），
+         共轭换算后 premultiply。对所有轨道骨统一，肘/腕/手指方向由此修正。 */
+      _conjQ.copy(wp).invert().multiply(_dq).multiply(wp);
+      b.quaternion.premultiply(_conjQ);
+    } else if (armAxisMode === 'quat' && (boneName === 'leftUpperArm' || boneName === 'rightUpperArm')) {
+      b.quaternion.premultiply(_dq);
+    } else {
+      b.quaternion.multiply(_dq);
+    }
+    if (s.p && boneName === 'hips' && !NO_WALK) {
+      const home = boneHome[boneName];
+      if (home) b.position.set(home.px + s.p[0] * SCALE_INV,
+                               home.py + s.p[1] * SCALE_INV,
+                               home.pz + s.p[2] * SCALE_INV);
+    }
+  }
+  return true;
+}
+
+/* ---- 舞蹈基准快照：加载后按「rest + 压臂(MMD rest 量)」摆好整套基准姿态，
+        缓存每个轨道骨的基准局部四元数/位置 + 父链世界四元数（Wp）。 ---- */
+const DANCE_BASE = {};   // bone -> { q: Quaternion, p: Vector3 }
+const DANCE_WP = {};     // bone -> 父骨世界四元数（基准姿态下）
+const DANCE_FINGER_BONES = [];
+function buildDanceBase() {
+  const H = vrm.humanoid;
+  if (!H) return;
+  const get = (nm) => (H.getRawBoneNode ? H.getRawBoneNode(nm) : H.getNormalizedBoneNode(nm));
+  /* 轨道可能写到的骨 = VMD_BONE_MAP 的值全集（含手指，HUMAN_BONES 之外也要复位） */
+  const trackables = new Set(HUMAN_BONES);
+  for (const k in VMD_BONE_MAP) {
+    const v = VMD_BONE_MAP[k];
+    if (!trackables.has(v)) { trackables.add(v); DANCE_FINGER_BONES.push(v); }
+  }
+  /* 第一遍：摆基准 */
+  for (const nm of trackables) {
+    const b = get(nm);
+    if (!b) continue;
+    const home = boneHome[nm];
+    if (!home) continue;
+    _base.set(home.qx, home.qy, home.qz, home.qw);
+    const f = ARM_FIX_Q[nm];
+    if (f && (nm === 'leftUpperArm' || nm === 'rightUpperArm')) {
+      const adVal = Math.max(0, (nm === 'leftUpperArm' ? ARM_DROP_L : ARM_DROP_R) - MMD_REST_DROP);
+      const frac = Math.min(1, Math.max(0, adVal / Math.max(f.full, 1e-3)));
+      if (frac > 0) {
+        _armTmpQ.copy(_armIdQ).slerp(f.q, frac);
+        _base.premultiply(_armTmpQ);
+      }
+    }
+    b.quaternion.copy(_base);
+    b.position.set(home.px, home.py, home.pz);
+    DANCE_BASE[nm] = { q: _base.clone(), p: new THREE.Vector3(home.px, home.py, home.pz) };
+  }
+  /* 第二遍：缓存基准姿态下的父链世界旋转 */
+  for (const nm of trackables) {
+    const b = get(nm);
+    if (!b || !DANCE_BASE[nm]) continue;
+    b.updateWorldMatrix(true, false);
+    DANCE_WP[nm] = b.parent.getWorldQuaternion(new THREE.Quaternion()).clone();
+  }
+  report('danceBase built: bones=' + Object.keys(DANCE_BASE).length +
+         ' wp=' + Object.keys(DANCE_WP).length + ' fingers=' + DANCE_FINGER_BONES.length);
+}
+
+
+/* VMD 位移单位是 MMD 的世界单位（约等于米，但骨骼尺度不同），
+   用身高比换算；没量出来就按 1 处理，最多位移不完美也不会散架。
+   ?nowalk=1 关掉位移（有些舞蹈的中心位移幅度很大，本地短腿模型上会显得整体漂移）。 */
+let SCALE_INV = 1;
+const NO_WALK = _q.has('nowalk');
+
+/* 动作诊断入口（tools/vrm2_dance.mjs 用）：play/stop/state */
+/* 骨骼数值探针（调试用）：输出关键骨骼的世界坐标 + 手肘肩几何量，
+   供外部对比两套模型在同一舞蹈时刻的姿态是否一致。 */
+window.__xyProbe = () => {
+  if (!vrm || !vrm.humanoid) return null;
+  const H = vrm.humanoid;
+  const get = (nm) => (H.getRawBoneNode ? H.getRawBoneNode(nm) : H.getNormalizedBoneNode(nm));
+  const V = new THREE.Vector3();
+  const names = ['hips', 'spine', 'chest', 'upperChest', 'neck', 'head',
+    'leftShoulder', 'leftUpperArm', 'leftLowerArm', 'leftHand',
+    'rightShoulder', 'rightUpperArm', 'rightLowerArm', 'rightHand',
+    'leftUpperLeg', 'leftLowerLeg', 'rightUpperLeg', 'rightLowerLeg'];
+  const out = {};
+  for (const nm of names) {
+    const b = get(nm);
+    if (!b) continue;
+    b.updateWorldMatrix(true, false);
+    b.getWorldPosition(V);
+    out[nm] = [+V.x.toFixed(3), +V.y.toFixed(3), +V.z.toFixed(3)];
+  }
+  const d = (a, b) => {
+    if (!out[a] || !out[b]) return null;
+    const p = out[a], q = out[b];
+    return +Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]).toFixed(3);
+  };
+  out._len = {
+    upperArmL: d('leftUpperArm', 'leftLowerArm'), foreArmL: d('leftLowerArm', 'leftHand'),
+    upperArmR: d('rightUpperArm', 'rightLowerArm'), foreArmR: d('rightLowerArm', 'rightHand'),
+    spine: d('hips', 'spine'), chest: d('spine', 'chest'), neck: d('chest', 'neck'),
+    thighL: d('leftUpperLeg', 'leftLowerLeg'), shinL: d('leftLowerLeg', 'leftFoot'),
+  };
+  /* 手相对肩的高度差（正=手高于肩）与前后差 */
+  if (out.leftHand && out.leftShoulder)
+    out._handL = { dy: +(out.leftHand[1] - out.leftShoulder[1]).toFixed(3),
+                   dx: +(out.leftHand[0] - out.leftShoulder[0]).toFixed(3),
+                   dz: +(out.leftHand[2] - out.leftShoulder[2]).toFixed(3),
+                   dist: d('leftShoulder', 'leftHand') };
+  if (out.rightHand && out.rightShoulder)
+    out._handR = { dy: +(out.rightHand[1] - out.rightShoulder[1]).toFixed(3),
+                   dx: +(out.rightHand[0] - out.rightShoulder[0]).toFixed(3),
+                   dz: +(out.rightHand[2] - out.rightShoulder[2]).toFixed(3),
+                   dist: d('rightShoulder', 'rightHand') };
+  out._height = +(out.head ? out.head[1] : 0).toFixed(3);
+  out._hipsY = +(out.hips ? out.hips[1] : 0).toFixed(3);
+  return out;
+};
+
+/* 调试：列出模型 humanoid 实际具备的骨骼名（判断缺骨/左右不对称） */
+window.__xyBones = () => {
+  const H = vrm && vrm.humanoid;
+  if (!H) return [];
+  const src = H.humanBones || H.humanBonesMap || H.bones || {};
+  return Object.keys(src);
+};
+
+window.__xyDance = {
+  play:  (k) => dance.play(k),
+  stop:  () => dance.stop(),
+  seek:  (t) => { if (dance.active) dance.startMs = performance.now() - t * 1000; },
+  state: () => ({
+    active: dance.active, key: dance.key,
+    dur: dance.clip ? +dance.clip.duration.toFixed(2) : 0,
+    bones: dance.clip ? Object.keys(dance.clip.tracks).length : 0,
+    cache: Object.keys(dance.cache),
+  }),
+};
+
+
+/* 自动截帧：URL ?autoshot=<prefix> 直接开启；或后端 _shot_flag.json
+   {"on":true,"prefix":"xx","gap":0.7} 动态开启（外部写文件即可控制）。
+   舞蹈播放期间每 gap 秒把当前渲染帧 POST 到 /api/pose_shot
+   （服务端存 _shots/api_<prefix>_<n>.png）。供外部验证真实窗口效果
+   （webview PrintWindow 抓不到动态帧）。截帧必须紧跟 renderer.render
+   （无 preserveDrawingBuffer，事后取是空白）。 */
+const AUTOSHOT = { cfg: null, next: 0, n: 0, pollMs: 0 };
+(function () {
+  const k = _q.get('autoshot');
+  if (k) AUTOSHOT.cfg = { on: true, prefix: (k.replace(/[^a-zA-Z0-9_-]/g, '') || 'shot'),
+    gap: Math.max(0.2, parseFloat(_q.get('autoshotgap')) || 0.7) };
+})();
+function autoshotTick(now) {
+  if (!AUTOSHOT.cfg && now >= AUTOSHOT.pollMs) {
+    AUTOSHOT.pollMs = now + 2000;
+    fetch('/api/shot_flag', { cache: 'no-store' }).then(r => r.json()).then(j => {
+      if (j && j.on) AUTOSHOT.cfg = { on: true, prefix: String(j.prefix || 'shot').replace(/[^a-zA-Z0-9_-]/g, '') || 'shot',
+        gap: Math.max(0.2, parseFloat(j.gap) || 0.7), seq: 0 };
+      else if (j && !j.on) AUTOSHOT.cfg = null;
+    }).catch(() => {});
+  }
+  if (!AUTOSHOT.cfg || !AUTOSHOT.cfg.on || !dance.active) return;
+  if (now < AUTOSHOT.next) return;
+  AUTOSHOT.next = now + AUTOSHOT.cfg.gap * 1000;
+  try {
+    const url = renderer.domElement.toDataURL('image/png');
+    const seq = AUTOSHOT.cfg.seq != null ? AUTOSHOT.cfg.seq : AUTOSHOT.n++;
+    if (AUTOSHOT.cfg.seq != null) AUTOSHOT.cfg.seq++;
+    fetch('/api/pose_shot', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ img: url, name: AUTOSHOT.cfg.prefix + '_' + String(seq).padStart(2, '0') }) });
+  } catch (e) {}
+}
+
+(function loop(){
+  requestAnimationFrame(loop);
+  const now = performance.now();
+  const t = (now - t0) / 1000;
+  /* vrm.update() 要的是「本帧的 deltaTime（秒）」，不是绝对时间。
+     弹簧骨公式是 stiffness*delta / gravityPower*delta 逐帧叠加位移，
+     喂绝对秒数会把作用力放大成几千倍 → 发丝被强力掀起（刘海全程上扬的根因）。
+     同时 clamp 到 1/15s，避免切标签页回来时一帧巨大 delta 把头发弹飞。 */
+  const dt = Math.min(0.0667, Math.max(0, (now - _lastFrameMs) / 1000));
+  _lastFrameMs = now;
+  if (rig && !fitting) {
+    /* 舞蹈优先：播动作时整帧交给 danceTick，跳过待机（两套都写骨骼会互相覆盖）。 */
+    const dancing = !STATIC_POSE && danceTick(now);
+    if (!dancing && !STATIC_POSE) animateBones(t);
+    driveBlink(t);
+    driveMouth();
+    /* 扩展钩子：gaze 平滑 + 戳一下挤压。必须在 animateBones/danceTick 之后（它们会写骨骼），
+       在 vrm.update 之前（弹簧骨/表情要吃到本帧最终骨骼姿态）。 */
+    if (window.__xyFrameHook) window.__xyFrameHook(t, dancing);
+    if (vrm) vrm.update(dt);
+    rig.rotation.set(0, YAW, 0);
+    rig.position.x = baseX;
+    rig.position.y = baseY;
+    rig.position.z = 0;
+  }
+  renderer.render(scene, camera);
+  autoshotTick(now);
+})();
+
+/* ===================== 启动：取当前模型 -> 加载 -> 轮询跟随 ===================== */
+/* 形象来源优先级：?model=（预览/调试，锁死） > /api/models 的 current > MODEL_URL 兜底。
+   后端 current 是 PMX 也可能 VRM，本页只认 VRM：切到 PMX 时保持当前模型，
+   并提示切换需要 PMX 页（避免桌面变成空白）。 */
+async function boot() {
+  let list = [];
+  if (!PREVIEW_MODEL) {
+    try {
+      const j = await (await fetch('/api/models', { cache: 'no-store' })).json();
+      list = (j && j.models) || [];
+      const cur = list.find(m => m.key === j.current);
+      if (cur && cur.kind === 'vrm' && cur.vrm) {
+        MODEL_URL = '/assets/' + cur.vrm;
+        CUR_MODEL_KEY = cur.key;
+      } else if (cur) {
+        CUR_MODEL_KEY = cur.key;
+        report('modelpick skip key=' + cur.key + ' kind=' + (cur.kind || '?'));
+      }
+    } catch (e) {
+      report('modelsfetchfail ' + (e && e.message ? e.message : e));
+    }
+  }
+  const path = PREVIEW_MODEL
+    ? (PREVIEW_MODEL.indexOf('/') === 0 || /\.vrm$/i.test(PREVIEW_MODEL)
+        ? PREVIEW_MODEL
+        : '/assets/' + PREVIEW_MODEL + '.vrm')
+    : MODEL_URL;
+  loadVRM(path);
+}
+
+/* 右键菜单/托盘切换后：后端 current 变了就整页重载（VRM 重建成本低且最干净） */
+setInterval(async function () {
+  if (LOCK_MODEL) return;
+  try {
+    const j = await (await fetch('/api/models', { cache: 'no-store' })).json();
+    if (!j || !j.current || j.current === CUR_MODEL_KEY) return;
+    const m = (j.models || []).find(x => x.key === j.current);
+    if (!m || m.kind !== 'vrm') {
+      CUR_MODEL_KEY = j.current;      // 记下来，避免每 2 秒反复判断
+      report('modelswitch ignore key=' + j.current + ' kind=' + (m && m.kind || '?'));
+      return;
+    }
+    report('modelswitch ' + CUR_MODEL_KEY + ' -> ' + j.current);
+    location.reload();
+  } catch (e) {}
+}, 2000);
+
+/* 动作切换：右键菜单/托盘改 /api/motions 的 current，这里 2 秒跟随。
+   'idle' = 内置待机（呼吸/歪头/挥手），回到 animateBones。 */
+setInterval(async function () {
+  try {
+    const j = await (await fetch('/api/motions', { cache: 'no-store' })).json();
+    if (!j || !j.current) return;
+    const want = j.current;                       // 'idle' 或动作 key
+    if (want === 'idle') {
+      if (dance.active) { dance.stop(); report('dance stop -> idle'); }
+      return;
+    }
+    if (dance.key === want && dance.active) return;
+    dance.play(want);
+  } catch (e) {}
+}, 2000);
+
+/* ===================== 加载 VRM ===================== */
+const NO_VRM = _q.has('novrm');
+const loader = new GLTFLoader();
+if (!NO_VRM) {
+  /* v0CompatShade：VRM0.x 的「亮区颜色钳制在贴图本色以内」。
+     VRM1.0 默认放开钳制，白底贴图 × 灯光直接顶到纯白（四肢发白的根因之一）。 */
+  loader.register((parser) => new VRMLoaderPlugin(parser, {
+    mtoonMaterialPlugin: new MToonMaterialLoaderPlugin(parser, { v0CompatShade: true })
+  }));
+}
+
+let MODEL_PATH = MODEL_URL;    // 实际加载路径（tint 预设按它取文件名）
+function loadVRM(path) {
+MODEL_PATH = path;
+loader.load(path, (gltf) => {
+  vrm = gltf.userData.vrm || null;
+  if (vrm) {
+    VRMUtils.removeUnnecessaryVertices(gltf.scene);
+    /* ?nojc=1 跳过节点树优化（诊断用）。这两步会重建节点层级，
+       弹簧骨的父链缓存可能在重建后指向失效节点 → 发丝被推歪。 */
+    if (!_q.has('nojc')) {
+      VRMUtils.removeUnnecessaryJoints(gltf.scene);
+      if (VRMUtils.combineSkeletons) VRMUtils.combineSkeletons(gltf.scene);
+    }
+  }
+
+  // 归一化：量出真实身高，据此缩放与居中（脚底 y=0、中线 x=0）
+  gltf.scene.updateWorldMatrix(true, true);
+  const box = new THREE.Box3().setFromObject(gltf.scene);
+  const size = box.getSize(new THREE.Vector3());
+  const center = box.getCenter(new THREE.Vector3());
+  report('vrmraw size=' + [size.x, size.y, size.z].map(v => v.toFixed(3)).join('x'));
+  const h = size.y || 1;
+  /* **不缩放模型本体**（原做法缩到 1 世界单位高）。代价是弹簧骨失真：
+     VRMSpringBoneJoint.update 里 stiffness/gravityPower 产生的是「每帧世界位移」，
+     collider 的 hitRadius/offset 也是世界单位 —— 都不随父级缩放变化，
+     而骨骼长度 _worldSpaceBoneLength 会等比缩短。缩小模型 = 相对刚度、
+     相对碰撞半径同时放大 1/s 倍（1.62m 模型缩 0.616 倍 → 两者都相对放大 1.62 倍），
+     结果刘海被碰撞体顶离头部、侧发被撑开。只补 stiffness/gravity 不够，
+     碰撞半径同样失真（已实测仍会翘）。
+     现在保持原生尺度，改由相机距离把这个尺度装进窗口，物理与建模时完全一致。 */
+  const s = 1;
+  gltf.scene.scale.setScalar(s);
+  gltf.scene.position.set(-center.x, -box.min.y, -center.z);
+
+  const holder = new THREE.Group();
+  holder.add(gltf.scene);
+  holder.position.set(0, -h / 2, 0);
+  gltf.scene.updateWorldMatrix(true, true);
+
+  rig = new THREE.Group();
+  rig.add(holder);
+  scene.add(rig);
+  rig.updateWorldMatrix(true, true);
+
+  // 记录骨骼初始姿态（待机动作以它为基准，整身绝不动）
+  boneHome = {};
+  if (vrm.humanoid) {
+    try { vrm.humanoid.autoUpdateHumanBones = false; } catch (e) {}
+    for (const nm of HUMAN_BONES) {
+      const b = vrm.humanoid.getRawBoneNode ? vrm.humanoid.getRawBoneNode(nm)
+                                            : vrm.humanoid.getNormalizedBoneNode(nm);
+      if (b) boneHome[nm] = {
+        rx: b.rotation.x, ry: b.rotation.y, rz: b.rotation.z,
+        qx: b.quaternion.x, qy: b.quaternion.y, qz: b.quaternion.z, qw: b.quaternion.w,
+        px: b.position.x, py: b.position.y, pz: b.position.z,
+      };
+    }
+  }
+  const names = Object.keys(boneHome);
+
+  /* 实测压臂角：rest pose 下 (手-上臂) 世界方向与竖直向下的夹角。
+     T-pose ≈ π/2、A-pose ≈ π/4、垂臂 ≈ 0。0.35 rad 余量内不压。 */
+  (function armDrop() {
+    const H = vrm.humanoid;
+    if (!H) return;
+    const get = (nm) => (H.getRawBoneNode ? H.getRawBoneNode(nm) : H.getNormalizedBoneNode(nm));
+    const _v3a = new THREE.Vector3(), _v3b = new THREE.Vector3();
+    const _qw = new THREE.Quaternion(), _qd = new THREE.Quaternion();
+    const _down = new THREE.Vector3(0, -1, 0);
+    for (const nm of ['left', 'right']) {
+      const ua = get(nm + 'UpperArm'), hd = get(nm + 'Hand');
+      if (!ua || !hd) continue;
+      ua.updateWorldMatrix(true, false); hd.updateWorldMatrix(true, false);
+      const pa = _v3a.setFromMatrixPosition(ua.matrixWorld);
+      const ph = _v3b.setFromMatrixPosition(hd.matrixWorld);
+      const d = ph.sub(pa).normalize();
+      const down = Math.acos(THREE.MathUtils.clamp(-d.y, -1, 1));
+      const drop = Math.max(0, down - 0.35);
+      if (nm === 'left')  window.__armL = drop; else window.__armR = drop;
+      /* quat 模式用：实测"臂世界方向 → 竖直向下"的世界旋转，
+         经 P⁻¹·R·P 共轭换到父级空间，渲染时 premultiply。 */
+      const key = nm + 'UpperArm';
+      ua.parent.getWorldQuaternion(_qw);
+      _qd.setFromUnitVectors(d, _down);
+      ARM_FIX_Q[key] = { q: _qw.clone().invert().multiply(_qd).multiply(_qw).clone(), full: down,
+                         rest: ua.quaternion.clone(),
+                         world: _qd.clone(), parent0: _qw.clone() };
+    }
+    ARM_DROP_L = window.__armL || 0; ARM_DROP_R = window.__armR || 0;
+    delete window.__armL; delete window.__armR;
+  })();
+  report('armdrop L=' + ARM_DROP_L.toFixed(3) + ' R=' + ARM_DROP_R.toFixed(3));
+  /* ?armdiag=1：输出 quat 链诊断（home/父链世界旋转/X） */
+  if (_q.has('armdiag')) {
+    const H = vrm.humanoid;
+    const get2 = (nm) => (H.getRawBoneNode ? H.getRawBoneNode(nm) : H.getNormalizedBoneNode(nm));
+    const _dq1 = new THREE.Quaternion(), _v1 = new THREE.Vector3();
+    const fmt = (q) => [q.x, q.y, q.z, q.w].map(v => v.toFixed(3)).join(',');
+    for (const nm of ['leftUpperArm', 'rightUpperArm']) {
+      const b = get2(nm), f = ARM_FIX_Q[nm];
+      if (!b || !f) continue;
+      b.parent.getWorldQuaternion(_dq1);
+      report('armdiag ' + nm + ' home=[' + fmt(b.quaternion) + '] parentW=[' + fmt(_dq1) +
+             '] X=[' + fmt(f.q) + '] rest=[' + fmt(f.rest) + ']');
+      b.getWorldPosition(_v1); report('armdiag ' + nm + ' shoulderPos=' + _v1.toArray().map(v=>v.toFixed(2)).join(','));
+      const hc = get2(nm.replace('Upper', 'Lower'));
+      if (hc) { hc.getWorldPosition(_v1); report('armdiag ' + nm + ' elbowPos=' + _v1.toArray().map(v=>v.toFixed(2)).join(',')); }
+    }
+  }
+  /* ?armdrop=0.6 (或 L,R) 手动覆盖实测压臂角 */
+  {
+    const ad = (_q.get('armdrop') || '').trim();
+    if (ad) {
+      const parts = ad.split(',').map(Number);
+      if (parts.length === 1 && isFinite(parts[0])) { ARM_DROP_L = parts[0]; ARM_DROP_R = parts[0]; }
+      else if (parts.length === 2 && parts.every(isFinite)) { ARM_DROP_L = parts[0]; ARM_DROP_R = parts[1]; }
+      report('armdrop override L=' + ARM_DROP_L.toFixed(3) + ' R=' + ARM_DROP_R.toFixed(3));
+    }
+  }
+  /* 压臂应用方式按 rest pose 四元数自动判定（armAxisMode，声明在文件头部全局）：
+     - 'euler'：rest 四元数接近单位（VRoid 系）→ 欧拉角叠加可用（旧行为）
+     - 'quat' ：rest 四元数非平凡（Avaturn/Mixamo 系）→ 欧拉叠加会被 rest
+       四元数吃掉。不再用"绕局部 Z 转固定角"（局部系相对世界有扭转，转 70°
+       实际只压下约 40°），改用加载时实测的纠正四元数（ARM_FIX_Q，见 armDrop），
+       渲染时按 ARM_DROP/实测全角 slerp 后 premultiply，角度即真实下压角。 */
+  {
+    const H2 = vrm.humanoid;
+    const g2 = (nm) => (H2.getRawBoneNode ? H2.getRawBoneNode(nm) : H2.getNormalizedBoneNode(nm));
+    const ua = g2('leftUpperArm');
+    if (ua) {
+      const qq = ua.quaternion;
+      const dev = 2 * Math.acos(Math.min(1, Math.abs(qq.w)));   // rest 与单位的夹角*2
+      armAxisMode = dev > 0.05 ? 'quat' : 'euler';
+    }
+    report('armAxisMode=' + armAxisMode + ' restW=' + (ua ? ua.quaternion.w.toFixed(3) : '?'));
+  }
+
+  /* 舞蹈基准快照（必须在 boneHome/ARM_FIX_Q/压臂覆盖全部就绪后） */
+  buildDanceBase();
+
+  /* 皮肤暖色调制（?skin=0 关）。材质名按 GLTF 真实名匹配（VRoid 系导出）。
+     注意：THREE.Color 是线性空间，写进来的系数会被 getHexString/渲染转回 sRGB，
+     所以这里填的是线性值（0.55 线性 ≈ 0.77 sRGB），比直觉要"更狠"。
+     现场可用 ?tint=r,g,b（身体）/ ?facetint=r,g,b（脸）标定。 */
+  if (SKIN_FIX_ON) {
+    const parse3 = (s, dflt) => {
+      const a = (s || '').split(',').map(Number);
+      return (a.length === 3 && a.every(v => isFinite(v) && v > 0 && v <= 1)) ? a : dflt;
+    };
+    /* 按模型标定：不同 VRoid 资产作者画的肤色不同，同一组系数不能通用。
+       小芸.vrm 贴图偏冷白 → 需要较强暖调；小芸-jk.vrm 贴图本身已是浅暖米色
+       （实测贴图肤色 ≈ 248,229,217），套强系数会偏深发黄，用弱档。
+       新模型走 default，偏"略白"而不是"发黄"，观感更安全。 */
+    const SKIN_TINT_TABLE = {
+      '小芸.vrm':    { body: [0.55, 0.44, 0.32], face: [0.60, 0.44, 0.40] },
+      '小芸-jk.vrm': { body: [0.78, 0.66, 0.56], face: [0.80, 0.68, 0.62] },
+      /* Avaturn 照片重建：贴图肤色即真实色，任何暖调都会过曝（白衣直接顶白）。
+         材质名也不匹配 VRoid 的 *_SKIN 规则，实际不会命中，这里登记是防呆。 */
+      'avaturn_nn.vrm': { body: [1, 1, 1], face: [1, 1, 1] },
+    };
+    const SKIN_TINT_DEF = { body: [0.72, 0.62, 0.52], face: [0.76, 0.64, 0.56] };
+    let _mKey = '';
+    try { _mKey = decodeURIComponent((MODEL_PATH || '').split('/').pop() || ''); } catch (e) {}
+    const _preset = SKIN_TINT_TABLE[_mKey] || SKIN_TINT_DEF;
+    const BODY_TINT = new THREE.Color(...parse3(_q.get('tint'), _preset.body));
+    const FACE_TINT = new THREE.Color(...parse3(_q.get('facetint'), _preset.face));
+    let nSkin = 0;
+    gltf.scene.traverse((o) => {
+      if (!o.isMesh) return;
+      const mats = Array.isArray(o.material) ? o.material : [o.material];
+      for (const m of mats) {
+        if (!m) continue;
+        const nm = m.name || '';
+        if (/Body_00_SKIN/.test(nm)) {
+          if (m.color) m.color.multiply(BODY_TINT);
+          m.needsUpdate = true; nSkin++;
+        } else if (/Face_00_SKIN/.test(nm)) {
+          if (m.color) m.color.multiply(FACE_TINT);
+          m.needsUpdate = true; nSkin++;
+        }
+      }
+    });
+    if (nSkin) report('skintone tinted mats=' + nSkin + ' preset=' + (_mKey || '?') +
+                      ' body=' + BODY_TINT.getHexString() + ' face=' + FACE_TINT.getHexString());
+  }
+
+  /* 白底材质通用处理：压掉 PBR 镜面（掠射角会顶白），开满各向异性过滤 */
+  const MAXANISO = (renderer && renderer.capabilities && renderer.capabilities.getMaxAnisotropy)
+                 ? renderer.capabilities.getMaxAnisotropy() : 1;
+  gltf.scene.traverse((o) => {
+    if (!o.isMesh) return;
+    const mats = Array.isArray(o.material) ? o.material : [o.material];
+    for (const m of mats) {
+      if (!m) continue;
+      m.metalness = 0.0;
+      if (m.metalnessMap) { m.metalnessMap = null; }
+      m.roughness = 1.0;
+      if ('envMapIntensity' in m) m.envMapIntensity = 0.0;
+      if ('specularIntensity' in m) m.specularIntensity = 0.0;
+      m.needsUpdate = true;
+    }
+    const imgs = [];
+    for (const m of mats) {
+      if (!m) continue;
+      for (const key of ['map', 'normalMap', 'emissiveMap', 'alphaMap']) {
+        if (m[key]) imgs.push(m[key]);
+      }
+    }
+    for (const t of imgs) {
+      t.anisotropy = MAXANISO;
+      t.needsUpdate = true;
+    }
+  });
+
+  report('vrmloaded bones=' + names.length + ' meta=' + (vrm.meta?.name || '?'));
+  try { sessionStorage.setItem('ctxReload', '0'); } catch (e) {}
+
+  /* ?dance=<key> 诊断直连：跳过 /api/motions 轮询，模型一就绪立即播该动作。
+     仅当 URL 显式带 dance 参数才生效，正常桌宠路径不受影响。 */
+  {
+    const _dk = _q.get('dance');
+    if (_dk && _dk !== 'idle') dance.play(_dk);
+  }
+
+  scheduleFit(0);
+  setTimeout(() => scheduleFit(0), 2000);
+}, (p) => {
+  if (p.total) report('vrmprogress ' + Math.round(p.loaded / p.total * 100) + '%');
+}, (err) => {
+  report('vrmfail ' + (err && err.message ? err.message : err));
+});
+}
+boot();
+
+let rzTimer = null;
+addEventListener('resize', () => { syncSize(); clearTimeout(rzTimer); rzTimer = setTimeout(autofit, 300); });
+
+/* ===================== 气泡 + 语音（desktoppmx 同款：seq 固定 + 流式优先） ===================== */
+(function(){
+  const bubble = document.getElementById('bubble');
+  const tip = document.getElementById('tip');
+  let seq = 0, bubbleTimer = null, curAudio = null;
+
+  /* 流式语音：裸 PCM + WebAudio 队列（从 desktoppmx 原样移植） */
+  const SR_STREAM = 24000;
+  const player = {
+    ctx: null, gain: null, nextTime: 0, scheduled: 0, gaps: 0, gen: 0,
+    sources: [], started: false,
+    acquire: function(){
+      if (this.ctx) {
+        if (this.ctx.state === 'suspended' && this.ctx.resume) this.ctx.resume().catch(function(){});
+        return this.ctx;
+      }
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return null;
+      let c = null;
+      try { c = new AC({ sampleRate: SR_STREAM }); }
+      catch (e) { try { c = new AC(); } catch (e2) { return null; } }
+      this.ctx = c;
+      this.gain = c.createGain();
+      this.gain.gain.value = 1;
+      this.gain.connect(c.destination);
+      if (c.state === 'suspended' && c.resume) c.resume().catch(function(){});
+      return c;
+    },
+    restart: function(){
+      this.gen++;
+      for (let i = 0; i < this.sources.length; i++) {
+        try { this.sources[i].stop(0); } catch (e) {}
+      }
+      this.sources = [];
+      this.nextTime = 0;
+      this.scheduled = 0;
+      this.gaps = 0;
+      this.started = false;
+      return this.gen;
+    },
+    push: function(i16){
+      const c = this.acquire();
+      if (!c || !i16.length) return;
+      const f32 = new Float32Array(i16.length);
+      for (let i = 0; i < i16.length; i++) f32[i] = i16[i] / 32768;
+      const ab = c.createBuffer(1, f32.length, SR_STREAM);
+      ab.copyToChannel(f32, 0);
+      const src = c.createBufferSource();
+      src.buffer = ab;
+      src.connect(this.gain);
+      const now = c.currentTime;
+      if (this.started && this.nextTime < now - 0.02) this.gaps++;
+      if (this.nextTime < now + 0.02) this.nextTime = now + 0.05;
+      try { src.start(this.nextTime); } catch (e) { return; }
+      this.nextTime += ab.duration;
+      this.scheduled += ab.duration;
+      this.sources.push(src);
+      if (this.sources.length > 64) this.sources.splice(0, this.sources.length - 64);
+      this.started = true;
+    },
+    played: function(){
+      if (!this.ctx) return 0;
+      const ahead = Math.max(0, this.nextTime - this.ctx.currentTime);
+      return Math.max(0, this.scheduled - ahead);
+    },
+    idle: function(){
+      if (!this.ctx) return 0;
+      return Math.max(0, this.nextTime - this.ctx.currentTime);
+    }
+  };
+
+  /* 流式口型：24k PCM 分片喂进来，20ms 窗算 RMS 包络，元音节拍按 0.22s/字推进 */
+  function makeStreamLip(text){
+    const F = 0.02;
+    const rms = [];
+    const spoken = [];
+    let acc = 0, peak = 0.06, buf = [];
+    let syls = [];
+    try {
+      if (window.XiaoyunLipSync && window.XiaoyunLipSync.parseText) {
+        const raw = window.XiaoyunLipSync.parseText(text) || [];
+        for (let i = 0; i < raw.length; i++) if (raw[i]) syls.push(raw[i]);
+      }
+    } catch (e) { syls = []; }
+
+    const ctl = {
+      ready: false, frames: 0,
+      weights: { a: 0, i: 0, u: 0, e: 0, o: 0, open: 0 },
+      stop: stop
+    };
+    let raf = 0, running = false, lastWall = performance.now();
+
+    function feed(i16){
+      for (let i = 0; i < i16.length; i++) buf.push(i16[i] / 32768);
+      const win = Math.round(SR_STREAM * F);
+      while (buf.length >= win) {
+        let s = 0;
+        for (let i = 0; i < win; i++) { const v = buf[i]; s += v * v; }
+        const r = Math.sqrt(s / win);
+        rms.push(r);
+        if (r > peak) peak = r;
+        if (r > 0.006) acc += F;
+        spoken.push(acc);
+        buf = buf.slice(win);
+      }
+      ctl.frames = rms.length;
+      ctl.ready = rms.length > 0;
+    }
+
+    function ampAt(t){
+      if (!rms.length) return 0;
+      const fi = Math.floor(t / F);
+      let v = 0;
+      for (let k = fi - 1; k <= fi + 1; k++) {
+        if (k >= 0 && k < rms.length && rms[k] > v) v = rms[k];
+      }
+      return Math.max(0, Math.min(1, v / Math.max(0.12, peak * 0.7)));
+    }
+
+    function visAt(t){
+      if (!syls.length) return -1;
+      const fi = Math.min(spoken.length - 1, Math.max(0, Math.floor(t / F)));
+      const sp = spoken.length ? spoken[fi] : 0;
+      const per = 0.22;
+      let idx = Math.floor(sp / per);
+      if (idx >= syls.length) idx = syls.length - 1;
+      const syl = syls[idx];
+      if (!syl) return -1;
+      const local = sp - idx * per;
+      const dOn = Math.min(0.11, Math.max(0.035, per * 0.22));
+      if ((syl.vi !== syl.vf || syl.vi === 0) && local < dOn) return syl.vi;
+      return syl.vf;
+    }
+
+    const VIS2NAME = { 1: 'a', 2: 'i', 3: 'u', 4: 'e', 5: 'o' };
+    let cur = { a: 0, i: 0, u: 0, e: 0, o: 0 };
+    function frame(){
+      if (!running) return;
+      raf = requestAnimationFrame(frame);
+      const t = player.played();
+      const amp = ampAt(t);
+      const vis = visAt(t);
+      const goal = { a: 0, i: 0, u: 0, e: 0, o: 0 };
+      if (amp > 0.03 && vis >= 0) {
+        const nm = VIS2NAME[vis];
+        if (nm) goal[nm] = 0.25 + 0.75 * amp;
+      }
+      const now = performance.now();
+      const dt = Math.min(0.05, Math.max(0.001, (now - lastWall) / 1000 || 0.016));
+      lastWall = now;
+      const rising = goal.a + goal.i + goal.u + goal.e + goal.o > cur.a + cur.i + cur.u + cur.e + cur.o;
+      const tau = (rising ? 40 : 90) / 1000;
+      const alpha = 1 - Math.exp(-dt / Math.max(0.004, tau));
+      let sum = 0;
+      const NAMES = ['a', 'i', 'u', 'e', 'o'];
+      for (let i = 0; i < NAMES.length; i++) {
+        const nm = NAMES[i];
+        cur[nm] += (goal[nm] - cur[nm]) * alpha;
+        if (cur[nm] < 0) cur[nm] = 0;
+        sum += cur[nm];
+      }
+      if (sum > 1) { for (let i = 0; i < NAMES.length; i++) cur[NAMES[i]] /= sum; sum = 1; }
+      for (let i = 0; i < NAMES.length; i++) ctl.weights[NAMES[i]] = cur[NAMES[i]];
+      ctl.weights.open = sum;
+    }
+
+    function stop(){
+      running = false;
+      if (raf) cancelAnimationFrame(raf), raf = 0;
+      ctl.weights = { a: 0, i: 0, u: 0, e: 0, o: 0, open: 0 };
+      cur = { a: 0, i: 0, u: 0, e: 0, o: 0 };
+    }
+
+    ctl.ctl = ctl;
+    ctl.feed = feed;
+    ctl.start = function(){
+      running = true;
+      lastWall = performance.now();
+      frame();
+    };
+    ctl.stop = function(){ stop(); };
+    return ctl;
+  }
+
+  function playPcmStream(text, mySeq){
+    if (curAudio) { try { curAudio.pause(); } catch (e) {} curAudio = null; }
+    const myGen = player.restart();
+    const lip = makeStreamLip(text);
+    window.__xyLip = lip;
+    window.xiaoyunSpeaking = true;
+    const tt0 = performance.now();
+    let done = false, firstAt = 0, bytes = 0, chunks = 0, streamDone = false;
+    let lastReport = 0;
+
+    player.acquire();
+    lip.start();
+    xlog('流式播放开始', 'seq=' + mySeq + ' ' + String(text || '').slice(0, 24));
+
+    function reportPlaying(force){
+      const d = player.scheduled;
+      if (d <= 0) return Promise.resolve();
+      const now = Date.now();
+      if (!force && now - lastReport < 300) return Promise.resolve();
+      lastReport = now;
+      return fetch('/api/voice/playing', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ seq: mySeq, dur: d }), cache: 'no-store'
+      }).catch(function(){});
+    }
+
+    function cleanup(){
+      streamDone = true;
+      if (curAudio) { try { curAudio.pause(); } catch (e) {} curAudio = null; }
+      if (!chunks) fail('没有收到任何音频');
+    }
+
+    function finish(reason){
+      if (done) return;
+      done = true;
+      clearInterval(timer);
+      lip.stop();
+      window.xiaoyunSpeaking = false;
+      reportPlaying(true).then(function(){
+        if (window.xiaoyunAudioEnded) window.xiaoyunAudioEnded(mySeq);
+      });
+      xlog('流式播放结束', 'seq=' + mySeq + ' 音频' + player.scheduled.toFixed(2)
+           + 's 分片' + chunks + ' 断流' + player.gaps + (reason ? ' · ' + reason : ''));
+    }
+
+    function fail(msg){
+      if (done) return;
+      done = true;
+      clearInterval(timer);
+      lip.stop();
+      window.xiaoyunSpeaking = false;
+      if (chunks) reportPlaying(true);
+      xlog('流式播放失败', 'seq=' + mySeq + ' ' + msg + ' → 退回整段合成');
+      fallbackAudio(text, mySeq);
+    }
+
+    function fallbackAudio(t, sq){
+      fetch('/api/tts_fallback', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: t }), cache: 'no-store'
+      }).then(function(r){
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.blob();
+      }).then(function(blob){
+        const url = URL.createObjectURL(blob);
+        const au = new Audio(url);
+        curAudio = au;
+        window.xiaoyunSpeaking = true;
+        au.onloadedmetadata = function(){
+          try {
+            const d = au.duration;
+            if (d && isFinite(d) && d > 0) {
+              fetch('/api/voice/playing', { method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ dur: d }) }).catch(function(){});
+            }
+          } catch (e) {}
+        };
+        au.onended = function(){
+          window.xiaoyunSpeaking = false;
+          xlog('兜底播放结束', 'seq=' + sq);
+          try { URL.revokeObjectURL(url); } catch (e) {}
+          if (window.xiaoyunAudioEnded) window.xiaoyunAudioEnded(sq);
+        };
+        try {
+          if (window.XiaoyunLipSync) window.__xyLip = window.XiaoyunLipSync.attach(au, t);
+        } catch (e) {}
+        au.play().catch(function(e){
+          window.xiaoyunSpeaking = false;
+          xlog('兜底播放被拦截', String(e && e.name || e));
+          fetch('/api/voice/unclaim', { method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ seq: sq }) }).catch(function(){});
+        });
+      }).catch(function(e){
+        window.xiaoyunSpeaking = false;
+        xlog('兜底也失败', String(e && e.message || e));
+        fetch('/api/voice/resume', { method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ seq: sq }) }).catch(function(){});
+      });
+    }
+
+    let lastPlayed = -1, stallMs = 0;
+    const timer = setInterval(function(){
+      if (player.gen !== myGen) { clearInterval(timer); return; }
+      const pl = player.played();
+      if (pl > lastPlayed + 0.001) { lastPlayed = pl; stallMs = 0; }
+      else stallMs += 120;
+      if (streamDone && player.idle() <= 0.02 && player.scheduled > 0) finish();
+      else if (streamDone && player.scheduled <= 0) finish();
+      else if (player.scheduled > 0 && stallMs > 4000) finish('播放头停滞（AudioContext 可能被挂起）');
+    }, 120);
+
+    const ac = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+    fetch('/api/tts_stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: text, seq: mySeq }),
+      cache: 'no-store',
+      signal: ac ? ac.signal : undefined
+    }).then(function(res){
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      if (!res.body || !res.body.getReader) throw new Error('no stream body');
+      const reader = res.body.getReader();
+      let carry = new Uint8Array(0);
+
+      function pump(){
+        return reader.read().then(function(r){
+          if (r.done) { cleanup(); return; }
+          if (player.gen !== myGen) { try { reader.cancel(); } catch (e) {} return; }
+          const u8 = r.value || new Uint8Array(0);
+          let all;
+          if (carry.length) {
+            all = new Uint8Array(carry.length + u8.length);
+            all.set(carry, 0);
+            all.set(u8, carry.length);
+          } else all = u8;
+          const even = all.length - (all.length % 2);
+          if (even > 0) {
+            const i16 = new Int16Array(all.buffer, all.byteOffset, even >> 1);
+            if (!firstAt) {
+              firstAt = performance.now() - tt0;
+              xlog('流式首块音频', Math.round(firstAt) + 'ms ' + (even / 2 / SR_STREAM).toFixed(2) + 's');
+            }
+            player.push(i16);
+            lip.feed(i16);
+            bytes += even;
+            chunks++;
+            reportPlaying();
+          }
+          carry = all.slice(even);
+          return pump();
+        });
+      }
+      return pump();
+    }).catch(function(e){
+      if (String(e && e.name) === 'AbortError') { cleanup(); return; }
+      fail(String(e && e.message || e));
+    });
+  }
+
+  function say(text, audioUri, streamOn, mySeqArg){
+    const mySeq = (mySeqArg != null ? mySeqArg : seq);
+    bubble.textContent = text;
+    bubble.classList.add('show');
+    clearTimeout(bubbleTimer);
+    bubbleTimer = setTimeout(function(){ bubble.classList.remove('show'); },
+                             Math.min(14000, 4200 + text.length * 190));
+    if (streamOn && mySeq != null){
+      playPcmStream(text, mySeq);
+      return;
+    }
+    if (audioUri){
+      try{
+        if (curAudio) curAudio.pause();
+        curAudio = new Audio(audioUri);
+        window.xiaoyunSpeaking = true;
+        xlog('播放回复语音', String(text || '').slice(0, 30));
+        const reportDur = function(){
+          try{
+            const d = curAudio && curAudio.duration;
+            if (d && isFinite(d) && d > 0){
+              fetch('/api/voice/playing', { method:'POST',
+                headers:{'Content-Type':'application/json'},
+                body: JSON.stringify({ dur: d }) }).catch(function(){});
+              xlog('上报播放时长', d.toFixed(2) + 's');
+            }
+          }catch(e){}
+        };
+        curAudio.onloadedmetadata = reportDur;
+        curAudio.onplaying = reportDur;
+        curAudio.onended = function(){
+          window.xiaoyunSpeaking = false;
+          xlog('语音播放结束', '通知后端恢复收音 seq=' + mySeq + '（本条）');
+          if (window.xiaoyunAudioEnded) window.xiaoyunAudioEnded(mySeq);
+        };
+        curAudio.play().catch(function(e){
+          console.warn('audio blocked', e);
+          xlog('语音播放被拦截', String(e && e.name || e));
+          window.xiaoyunSpeaking = false;
+          try{
+            fetch('/api/voice/unclaim', { method:'POST',
+              headers:{'Content-Type':'application/json'},
+              body: JSON.stringify({ seq: mySeq }) }).catch(function(){});
+          }catch(e2){}
+        });
+        try{
+          if (window.XiaoyunLipSync){
+            if (window.__xyLip && window.__xyLip.stop) window.__xyLip.stop();
+            window.__xyLip = window.XiaoyunLipSync.attach(curAudio, text);
+            xlog('口型同步已挂载', String(text || '').length + '字');
+          }
+        }catch(e){ xlog('口型同步挂载失败', String(e && e.message || e)); }
+      }catch(e){ xlog('语音播放异常', String(e)); }
+    }
+  }
+
+  let polling = false;
+  function poll(){
+    if (polling) return;
+    polling = true;
+    fetch('/api/last?since=' + seq).then(function(r){ return r.json(); })
+      .then(function(j){
+        if (j && j.fresh && j.reply){
+          seq = j.seq;
+          xlog('收到新回复', 'seq=' + j.seq + (j.stream ? ' (流式)' : ''));
+          say(j.reply, j.audio, j.stream, j.seq);
+        }
+      })
+      .catch(function(){})
+      .then(function(){ polling = false; });
+  }
+  fetch('/api/history').then(function(r){ return r.json(); }).then(function(j){
+    if (j && typeof j.seq === 'number') seq = j.seq;
+  }).catch(function(){}).then(function(){ poll(); setInterval(poll, 400); });
+
+  setTimeout(function(){ tip.style.opacity = 0.9; }, 600);
+  setTimeout(function(){ tip.style.opacity = 0; }, 7000);
+  window.xiaoyunSay = function(text){ if (text) say(text, null); };
+})();
+
+/* ===================== 语音对话（desktoppmx 同款：vad/ptt + 状态轮询） ===================== */
+(function(){
+  const mic    = document.getElementById('mic');
+  const ring   = document.getElementById('micRing');
+  const modeEl = document.getElementById('vmode');
+  const stat   = document.getElementById('vstat');
+  if (!mic) return;
+
+  let mode = 'vad';
+  let active = false;
+  let recording = false;
+  let micBusy = false;
+  let lastSeq = -1;
+  let lastPhase = null;
+
+  function post(path, obj){
+    return fetch(path, { method:'POST', headers:{'Content-Type':'application/json'},
+                         body: JSON.stringify(obj || {}) }).then(function(r){ return r.json(); });
+  }
+  function setStat(t, kind){
+    stat.textContent = t || '';
+    stat.className = kind || '';
+  }
+  function setMic(){
+    mic.classList.toggle('on', recording);
+    mic.classList.toggle('busy', micBusy && !recording);
+    mic.textContent = recording ? '⏹' : (micBusy ? '💭' : '🎤');
+    mic.title = recording ? '正在听你说话，点击结束'
+              : (micBusy ? '她正在回复，等她说完再点' : '点击开始说话');
+    ring.classList.toggle('live', recording);
+  }
+  function renderMode(){
+    modeEl.textContent = mode === 'vad' ? '🎙 连续对话' : '🎤 按键说话';
+    modeEl.title = mode === 'vad' ? '当前：连续对话（说完停顿自动识别），点击切成按键说话'
+                                  : '当前：按键说话（点了才听、再点结束），点击切成连续对话';
+  }
+
+  let lastState = null, lastOnline = null;
+  function poll(){
+    fetch('/api/voice/state').then(function(r){ return r.json(); }).then(function(j){
+      if (!j || !j.asr_online){
+        if (lastOnline !== false){
+          lastOnline = false;
+          xlog('ASR 离线', String((j && j.error) || '语音识别服务未启动'));
+        }
+        setStat('语音服务没启动，见 asr_err.log', 'err');
+        setMic();
+        return;
+      }
+      if (lastOnline !== true){
+        lastOnline = true;
+        xlog('ASR 在线', '设备=' + (j.device || '?'));
+      }
+      if (shellOnline !== !!j.shell_online){
+        shellOnline = !!j.shell_online;
+        xlog('桌面壳状态', shellOnline ? '在线：点击由壳的隐形层接管'
+                                      : '未检测到（页面自行处理点击）');
+      }
+      if (j.state !== lastState){
+        xlog('状态变化', String(lastState) + ' -> ' + j.state
+             + ' 电平=' + j.level + ' 原始=' + j.raw_level + ' 阈值=' + j.thr
+             + ' 在语音=' + j.in_speech + ' 静音计数=' + j.silence_run);
+        lastState = j.state;
+      }
+      if (j.mode && j.mode !== mode){
+        mode = j.mode;
+        renderMode();
+        xlog('界面模式同步', mode);
+        setTimeout(pushRects, 60);
+      } else {
+        renderMode();
+      }
+      recording = !!j.recording;
+      active = j.state !== 'off';
+
+      const phase = j.phase || '';
+      micBusy = (phase === 'waiting_model' || phase === 'waiting_play'
+                 || phase === 'playing' || phase === 'wrapping'
+                 || (!!j.busy && !recording));
+      if (phase !== lastPhase){
+        xlog('阶段变化', String(lastPhase) + ' -> ' + phase
+             + '（已 ' + (j.phase_secs || 0) + 's）');
+        lastPhase = phase;
+      }
+
+      if (recording){
+        const lv = Math.max(0, Math.min(1, (j.level || 0) * 6));
+        ring.style.transform = 'scale(' + (1 + lv * 0.9).toFixed(2) + ')';
+        ring.style.opacity = String(0.35 + lv * 0.65);
+        setStat(mode === 'vad' ? '🎤 在听…说完停一下' : '🎤 在听…再点一次结束', 'on');
+      } else if (phase === 'waiting_model'){
+        const s = j.phase_secs || 0;
+        setStat('🧠 正在想…' + (s >= 1 ? (s >= 10 ? s.toFixed(0) : s.toFixed(1)) + 's' : ''),
+                s >= 8 ? 'slow' : 'wait');
+      } else if (phase === 'waiting_play'){
+        setStat('准备开口…', 'wait');
+      } else if (phase === 'playing'){
+        const left = j.playback_left || 0;
+        setStat('🔊 正在说…' + (left > 0.2 ? left.toFixed(1) + 's' : ''), 'on');
+      } else if (phase === 'wrapping'){
+        setStat('快好了…', 'wait');
+      } else if (j.state === 'thinking'){
+        setStat('正在识别…');
+      } else if (j.state === 'pending'){
+        setStat('识别到了，等她回话', 'on');
+      } else if (active){
+        setStat(j.detail || '');
+      } else {
+        setStat('');
+      }
+      setMic();
+
+      if (j.text && j.seq !== lastSeq){
+        lastSeq = j.seq;
+        if (typeof window.xiaoyunSay === 'function') window.xiaoyunSay('我听到：' + j.text);
+      }
+    }).catch(function(){});
+  }
+  setInterval(poll, 400);
+
+  mic.addEventListener('click', function(ev){
+    ev.stopPropagation();
+    xlog('麦克风点击(页面)', 'recording=' + recording + ' shell=' + hasShell());
+    if (hasShell()){
+      xlog('麦克风点击(页面)', '桌面壳接管，页面不重复触发');
+      return;
+    }
+    if (micBusy){
+      setStat(lastPhase === 'waiting_model' ? '她正在想，等一下…' : '她正在说，等一下…', 'wait');
+      return;
+    }
+    if (window.xiaoyunSpeaking){
+      setStat('她在说话，等一下…', 'err');
+      return;
+    }
+    if (!recording){
+      post('/api/voice/start', { mode: mode }).then(function(j){
+        if (!j.ok) setStat(j.error || '启动失败', 'err');
+        else setStat(mode === 'vad' ? '🎤 在听…说完停一下' : '🎤 在听…再点一次结束', 'on');
+      }).catch(function(){ setStat('启动失败', 'err'); });
+    } else {
+      post('/api/voice/stop').catch(function(){});
+    }
+  });
+
+  modeEl.addEventListener('click', function(ev){
+    ev.stopPropagation();
+    xlog('模式切换点击(页面)', '当前=' + mode + ' shell=' + hasShell());
+    if (hasShell()){
+      xlog('模式切换点击(页面)', '桌面壳接管，页面不重复触发');
+      return;
+    }
+    const next = mode === 'vad' ? 'ptt' : 'vad';
+    post('/api/voice/mode', { mode: next }).then(function(j){
+      if (j.ok){
+        mode = next;
+        renderMode();
+        setStat(mode === 'vad' ? '连续对话：点麦克风开始，说完自动识别'
+                               : '按键说话：点了才听，再点一次结束');
+      }
+    }).catch(function(){});
+  });
+
+  window.xiaoyunAudioEnded = function(endedSeq){
+    xlog('通知后端恢复收音', '/api/voice/resume seq=' + endedSeq);
+    post('/api/voice/resume', { seq: endedSeq }).catch(function(){});
+  };
+
+  /* 控件位置常驻上报（HTTP，不走 JS 桥 —— 桥会堵死 UI 线程，见 desktoppmx 教训） */
+  let lastMicReported = null, lastModeReported = null;
+  function pushRects(){
+    try{
+      var m = document.getElementById('micWrap').getBoundingClientRect();
+      var d = document.getElementById('vmode').getBoundingClientRect();
+      if (!lastMicReported || Math.abs(lastMicReported.x - m.left) > 1
+                            || Math.abs(lastMicReported.y - m.top) > 1
+                            || Math.abs(lastMicReported.w - m.width) > 1){
+        lastMicReported = { x: m.left, y: m.top, w: m.width };
+      }
+      if (!lastModeReported || Math.abs(lastModeReported.x - d.left) > 1
+                             || Math.abs(lastModeReported.y - d.top) > 1
+                             || Math.abs(lastModeReported.w - d.width) > 1){
+        lastModeReported = { x: d.left, y: d.top, w: d.width };
+      }
+      post('/api/ui/rects', {
+        mic:  [m.left, m.top, m.width, m.height],
+        mode: [d.left, d.top, d.width, d.height],
+        vw: window.innerWidth, vh: window.innerHeight
+      }).catch(function(){});
+      return true;
+    }catch(e){ return false; }
+  }
+  let rectWatch = null;
+  function startRectWatch(){
+    if (rectWatch) return;
+    pushRects();
+    rectWatch = setInterval(pushRects, 600);
+    xlog('控件位置常驻上报', '每 0.6s 经 HTTP 同步给桌面壳');
+  }
+  startRectWatch();
+  addEventListener('resize', function(){ setTimeout(pushRects, 300); });
+
+  renderMode();
+  setStat('点麦克风或按 Ctrl+Alt+V 开始说话');
+  xlog('语音模块就绪', '默认 mode=' + mode + ' shell=' + hasShell());
+})();
+
+/* ===================== 思考中指示（/api/brain/state） ===================== */
+(function(){
+  const thinkEl = document.getElementById('think');
+  let brainShown = false;
+  function pollBrain() {
+    fetch('/api/brain/state', { cache: 'no-store' }).then(function (r) {
+      return r.ok ? r.json() : null;
+    }).then(function (j) {
+      if (!j || !j.ok) return;
+      const bubbleEl = document.getElementById('bubble');
+      thinkEl.style.top = (bubbleEl && bubbleEl.classList.contains('show')) ? '72px' : '14px';
+      const want = (j.state === 'thinking' || j.state === 'error');
+      if (j.state === 'thinking') {
+        thinkEl.innerHTML = '她在想<span class="dot"></span><span class="dot"></span><span class="dot"></span>';
+      } else if (j.state === 'error') {
+        thinkEl.innerHTML = '刚才走神了…';
+      }
+      if (want !== brainShown) {
+        brainShown = want;
+        thinkEl.classList.toggle('show', want);
+      }
+    }).catch(function () {});
+  }
+  setInterval(pollBrain, 2000);
+})();
+
+/* ===================== 眼神追随 + 戳一下（VRM 版精简实现） =====================
+   数据链与 desktoppmx 完全一致：壳 CursorPoller → /api/gaze/cursor →
+   这里 150ms GET /api/gaze → 目标角 → 指数平滑 → VRM 眼骨/头部。
+   戳一下：同一条轮询搭车读 poke，rig.scale 等体积挤压 + 三级延迟。
+   表情走 VRM expressionManager（surprised/angry/happy），没有对应表情自动跳过。 */
+(function(){
+  const GAZE_POLL_MS = 150, GAZE_MAX_AGE = 1.0;
+  const GAZE_YAW_MAX = 0.26, GAZE_PITCH_MAX = 0.20;
+  const GAZE_DEAD_PX = 46, GAZE_REF_PX = 260, GAZE_TAU = 0.10;
+  const GAZE_HEAD_YAW = 1.60, GAZE_HEAD_PITCH = 2.00;
+
+  const gaze = {
+    yaw: 0, pitch: 0, tYaw: 0, tPitch: 0,
+    enabled: true, mode: 'always', hasBones: false, hold: false,
+    poll: async function () {
+      if (this.hold) return;      // 诊断用：冻结服务端输入，便于定点验证平滑与骨骼响应
+      let j;
+      try {
+        const r = await fetch('/api/gaze', { cache: 'no-store' });
+        j = await r.json();
+      } catch (e) { return; }
+      if (!j || !j.ok) return;
+      if (j.poke) poke.feed(j.poke, j.click_style);
+      if (j.mode && j.mode !== this.mode) {
+        this.mode = j.mode;
+        if (this.mode !== 'always') { this.tYaw = 0; this.tPitch = 0; }
+        report('vrmgaze mode=' + this.mode);
+      }
+      if (this.mode === 'off' || !this.enabled || !this.hasBones) {
+        this.tYaw = 0; this.tPitch = 0;
+        return;
+      }
+      if (j.age < 0 || j.age > GAZE_MAX_AGE || !j.rect) {
+        this.tYaw = 0; this.tPitch = 0;
+        return;
+      }
+      const l = j.rect[0], t = j.rect[1], rr = j.rect[2], b = j.rect[3];
+      const px = j.x - (l + rr) / 2, py = j.y - (t + b) / 2;
+      const len = Math.hypot(px, py);
+      if (len < GAZE_DEAD_PX) { this.tYaw = 0; this.tPitch = 0; return; }
+      const ux = px / len, uy = py / len;
+      const eff = (len - GAZE_DEAD_PX) / GAZE_REF_PX;
+      const s = 1 - Math.exp(-eff * 1.2);
+      this.tYaw   = ux * s * GAZE_YAW_MAX;
+      this.tPitch = uy * s * GAZE_PITCH_MAX;
+    },
+    update: function (dt) {
+      const a = 1 - Math.exp(-dt / GAZE_TAU);
+      this.yaw   += (this.tYaw   - this.yaw)   * a;
+      this.pitch += (this.tPitch - this.pitch) * a;
+    },
+    offsets: function () {
+      if (!this.enabled || !this.hasBones || this.mode === 'off') return null;
+      if (STATIC_POSE) return null;
+      return { yaw: this.yaw, pitch: this.pitch };
+    },
+  };
+
+  /* VRM 骨骼驱动：gaze 偏移在 animateBones 的 set() 里叠加（home + 待机 + gaze）。 */
+  const _origAnimate = animateBones;
+  animateBones = function (t) {
+    _origAnimate(t);
+    const gz = gaze.offsets();
+    if (!gz || !vrm || !vrm.humanoid) return;
+    const H = vrm.humanoid;
+    const get = (nm) => (H.getRawBoneNode ? H.getRawBoneNode(nm) : H.getNormalizedBoneNode(nm));
+    const set2 = (nm, dx, dy, dz) => {
+      const b = get(nm); if (!b) return;
+      const home = boneHome[nm]; if (!home) return;
+      b.rotation.set(home.rx + dx, home.ry + dy, home.rz + dz);
+    };
+    /* VRM1.0 面向 +Z：rotation.y+ = 向左看。要"鼠标向右、她看右"，y 取负。
+       x+ = 低头，pitch+（鼠标向下）→ x+ 同向。 */
+    set2('leftEye',  gz.pitch, -gz.yaw, 0);
+    set2('rightEye', gz.pitch, -gz.yaw, 0);
+    const hp = {
+      neckY: -gz.yaw   * GAZE_HEAD_YAW   * 0.45,
+      headY: -gz.yaw   * GAZE_HEAD_YAW   * 0.55,
+      neckX:  gz.pitch * GAZE_HEAD_PITCH * 0.25,
+      headX:  gz.pitch * GAZE_HEAD_PITCH * 0.75,
+    };
+    set2('neck', hp.neckX, look_sin(t) * ACT.head + hp.neckY, 0);
+    set2('head', hp.headX, hp.headY, 0);
+  };
+  function look_sin(t) { return Math.sin(t * 0.35); }
+
+  setInterval(function () { gaze.poll(); }, GAZE_POLL_MS);
+
+  /* ---- 戳一下（rig.scale 挤压 + 三级延迟，VRM 版） ---- */
+  const POKE_CHAIN_MS = 800, POKE_MIN_GAP = 0.10;
+  const POKE_STYLES = {
+    soft:  { sy: 0.017, sx: 0.010, headX: 0.165, headZ: 0.075,
+             neckX: 0.070, rise: 0.075, tau: 0.105, over: 0.06, dur: 0.55 },
+    vivid: { sy: 0.030, sx: 0.018, headX: 0.265, headZ: 0.115,
+             neckX: 0.110, rise: 0.070, tau: 0.130, over: 0.12, dur: 0.66 },
+  };
+  const POKE_D_NECK = 0.040, POKE_D_HEAD = 0.080;
+  const POKE_HEAD_TAU = 1.35, POKE_NECK_TAU = 1.12;
+
+  function pokeCurve(dt, rise, tau, over) {
+    if (!(dt > 0)) return 0;
+    if (dt < rise) {
+      const c = 1.70158 * (over / 0.10);
+      const u = dt / rise - 1;
+      return 1 + (c + 1) * u * u * u + c * u * u;
+    }
+    return Math.exp(-(dt - rise) / tau);
+  }
+
+  const poke = {
+    seq: -1, t0: -99, lastAt: -99, annoyed: false, active: false,
+    part: 'body', style: 'soft', bx: 1, by: 1, bz: 1,
+
+    feed: function (p, style) {
+      if (style && POKE_STYLES[style]) this.style = style;
+      if (!p || typeof p.seq !== 'number') return;
+      if (p.seq === this.seq) return;
+      const first = this.seq < 0;
+      this.seq = p.seq;
+      if (first) return;
+      const now = (performance.now() - t0) / 1000;
+      if (now - this.lastAt < POKE_MIN_GAP) return;
+      this.annoyed = (now - this.lastAt) * 1000 < POKE_CHAIN_MS;
+      this.lastAt = now;
+      this.t0 = now;
+      this.active = true;
+      this.part = this._pickPart(p.x, p.y);
+      this.bx = rig ? (rig.scale.x || 1) : 1;
+      this.by = rig ? (rig.scale.y || 1) : 1;
+      this.bz = rig ? (rig.scale.z || 1) : 1;
+      report('vrmpoke ' + (this.annoyed ? 'annoyed' : 'surprised') + ' part=' + this.part);
+    },
+
+    _pickPart: function (nx, ny) {
+      if (!rig || typeof nx !== 'number' || typeof ny !== 'number') return 'body';
+      try {
+        if (!vrm || !vrm.humanoid) return ny < 0.30 ? 'head' : 'body';
+        const H = vrm.humanoid;
+        const get = (nm) => (H.getRawBoneNode ? H.getRawBoneNode(nm) : H.getNormalizedBoneNode(nm));
+        const head = get('head');
+        if (!head) return ny < 0.30 ? 'head' : 'body';
+        camera.updateMatrixWorld();
+        const ray = new THREE.Raycaster();
+        ray.setFromCamera(new THREE.Vector2(nx * 2 - 1, -(ny * 2 - 1)), camera);
+        const hits = ray.intersectObject(rig, true);
+        if (hits.length) {
+          const hv = new THREE.Vector3();
+          head.getWorldPosition(hv);
+          return hits[0].point.y > hv.y - 0.12 ? 'head' : 'body';
+        }
+      } catch (e) {}
+      return ny < 0.30 ? 'head' : 'body';
+    },
+
+    tick: function (t) {
+      if (!this.active) { if (this._was) { this._was = false; this._face(0); } return; }
+      const cfg = POKE_STYLES[this.style] || POKE_STYLES.soft;
+      const dt = t - this.t0;
+      if (dt < 0 || dt > cfg.dur) {
+        this.active = false; this._was = false;
+        this._face(0);
+        if (rig) rig.scale.set(this.bx, this.by, this.bz);
+        return;
+      }
+      this._was = true;
+      const kPart = this.part === 'head' ? { squash: 0.35, head: 1.00, neck: 0.90 } : { squash: 1.00, head: 0.35, neck: 0.30 };
+      const eBody = pokeCurve(dt, cfg.rise, cfg.tau, cfg.over) * kPart.squash;
+      const eNeck = pokeCurve(dt - POKE_D_NECK, cfg.rise, cfg.tau * POKE_NECK_TAU, cfg.over) * kPart.neck;
+      const eHead = pokeCurve(dt - POKE_D_HEAD, cfg.rise, cfg.tau * POKE_HEAD_TAU, cfg.over) * kPart.head;
+      if (rig) {
+        const sy = cfg.sy * eBody, sx = cfg.sx * eBody;
+        rig.scale.set(this.bx * (1 + sx), this.by * (1 - sy), this.bz * (1 + sx));
+      }
+      const H = vrm && vrm.humanoid;
+      if (H) {
+        const get = (nm) => (H.getRawBoneNode ? H.getRawBoneNode(nm) : H.getNormalizedBoneNode(nm));
+        const home = boneHome || {};
+        const set2 = (nm, dx, dy, dz) => {
+          const b = get(nm); if (!b) return;
+          const h = home[nm]; if (!h) return;
+          b.rotation.set(h.rx + dx, h.ry + dy, h.rz + dz);
+        };
+        const nk = get('neck'), hd = get('head');
+        if (nk) set2('neck', -cfg.neckX * eNeck, 0, 0);
+        if (hd) set2('head', -cfg.headX * eHead, 0, cfg.headZ * eHead * (this.part === 'head' ? 1 : 0.35));
+      }
+      this._face(Math.max(eHead, eBody));
+    },
+
+    _face: function (emo) {
+      const em = vrm && vrm.expressionManager;
+      if (!em) return;
+      try {
+        if (this.annoyed) { em.setValue('angry', Math.min(1, emo * 1.15)); em.setValue('relaxed', Math.min(1, emo * 0.6)); }
+        else { em.setValue('surprised', Math.min(1, emo * 1.15)); em.setValue('happy', 0); }
+        if (emo <= 0.01) {
+          em.setValue('surprised', 0); em.setValue('angry', 0); em.setValue('relaxed', 0);
+        }
+      } catch (e) {}
+    },
+  };
+  window.__xyVrmPoke = poke;
+
+  /* 诊断入口（无头验证 / 现场排查）：只读 + 一个 gaze 注入，不参与业务逻辑 */
+  window.__xyDbg = {
+    rigScale: function () { return rig ? [rig.scale.x, rig.scale.y, rig.scale.z] : null; },
+    rigPos:   function () { return rig ? [rig.position.x, rig.position.y, rig.position.z] : null; },
+    baseY:    function () { return baseY; },
+    silh:     function () { return screenSilhouette(); },
+    box:      function () {
+      const b = new THREE.Box3().setFromObject(rig);
+      return { min: [b.min.x, b.min.y, b.min.z], max: [b.max.x, b.max.y, b.max.z] };
+    },
+    cam:      function () {
+      return { z: camera.position.z, fov: camera.fov, aspect: camera.aspect,
+               w: renderer.domElement.width, h: renderer.domElement.height };
+    },
+    mats:     function () {
+      const out = [];
+      if (!rig) return out;
+      rig.traverse(function (o) {
+        if (!o.isMesh) return;
+        const ms = Array.isArray(o.material) ? o.material : [o.material];
+        for (const m of ms) {
+          if (!m) continue;
+          out.push({
+            name: m.name, mtoon: !!m.isMToonMaterial,
+            color: m.color ? m.color.getHexString() : null,
+            shade: m.shadeColorFactor ? m.shadeColorFactor.getHexString() : null,
+            shift: m.shadingShiftFactor, toony: m.shadingToonyFactor,
+          });
+        }
+      });
+      return out;
+    },
+    refit:    function () { autofit(); return screenSilhouette(); },
+    gaze:     function () {
+      return { yaw: gaze.yaw, pitch: gaze.pitch, tYaw: gaze.tYaw, tPitch: gaze.tPitch,
+               hasBones: gaze.hasBones, mode: gaze.mode };
+    },
+    setGaze:  function (yaw, pitch) { gaze.tYaw = yaw; gaze.tPitch = pitch || 0; },
+    holdGaze: function (v) { gaze.hold = !!v; },
+    /* 弹簧骨诊断：spring(0) = reset 回建模初始姿态并停物理；spring(1) = 恢复物理。
+       joints 是 Set，必须用 clear/add，不能碰 length。 */
+    spring:   function (on) {
+      if (!vrm || !vrm.springBoneManager) return 'no-manager';
+      const m = vrm.springBoneManager;
+      const J = m.joints;
+      if (on === false) {
+        if (!this._xySaved) this._xySaved = Array.from(J);
+        /* reset 会把每根骨的 quaternion 恢复到 initialLocalRotation —— 只清空
+           joints 只是停止推进，骨头会僵在被推到的位置，测不出真实差异。 */
+        try { m.reset(); } catch (e) {}
+        J.clear();
+        m._isSortedJointsDirty = true;
+        return 'off:' + this._xySaved.length;
+      }
+      if (this._xySaved) {
+        J.clear();
+        this._xySaved.forEach(j => J.add(j));
+        m._isSortedJointsDirty = true;
+        try { m.setInitState(); } catch (e) {}
+        return 'on:' + this._xySaved.length;
+      }
+      return 'already-on';
+    },
+    poke:     function () {
+      return { active: poke.active, seq: poke.seq, part: poke.part, style: poke.style, annoyed: poke.annoyed };
+    },
+    head:     function () {
+      if (!vrm || !vrm.humanoid) return null;
+      const H = vrm.humanoid;
+      const g = (n) => (H.getRawBoneNode ? H.getRawBoneNode(n) : H.getNormalizedBoneNode(n));
+      const out = {};
+      for (const n of ['head', 'neck', 'leftEye', 'rightEye']) {
+        const b = g(n);
+        if (b) out[n] = [b.rotation.x, b.rotation.y, b.rotation.z];
+      }
+      return out;
+    },
+  };
+
+  /* 帧钩子：gaze 平滑 + 戳一下挤压。
+     由渲染循环在 animateBones 之后、vrm.update 之前调用（顺序不能改：
+     animateBones 每帧会写 rig.scale，poke 必须后写才能盖住；vrm.update 要吃最终骨骼）。 */
+  let _lastT = -1;
+  window.__xyFrameHook = function (t, dancing) {
+    /* 模型异步加载完成后才有骨骼，每帧现查，避免加载时序耦合 */
+    gaze.hasBones = !!(vrm && vrm.humanoid && boneHome);
+    const dt = _lastT < 0 ? 1 / 60 : Math.min(0.1, Math.max(0, t - _lastT));
+    _lastT = t;
+    /* 跳舞时不追鼠标：舞蹈自带头部/眼球轨道，再叠 gaze 会让她的头乱抖。
+       眼神模式选 always 也一样让位给动作（与 PMX 页同一套策略）。 */
+    if (gaze.hasBones && !dancing) gaze.update(dt);
+    poke.tick(t);
+  };
+})();
+</script>
+</body>
+</html>

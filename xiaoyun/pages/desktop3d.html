@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html style="margin:0;padding:0;">
+<head>
+<meta charset="UTF-8">
+<title>念念 3D</title>
+<style>
+  :root{ --pink:#EAA7B2; --pink-deep:#d97891; --ink:#2a2230; }
+  *{ box-sizing:border-box; }
+  /* 页面必须保持真透明：桌面壳会把 WinForms 窗体底色刷成色键色（见 desktop_app.py 的 KEY_COLOR），
+     WebView2 透出窗体底色后，再由色键把这一整片抠掉。这里千万别填实色。 */
+  html,body{
+    margin:0; padding:0; width:100%; height:100%; overflow:hidden;
+    background:transparent;
+    font-family:"PingFang SC","Microsoft YaHei",Segoe UI,Arial,sans-serif;
+    user-select:none; -webkit-user-select:none; cursor:default;
+  }
+  #stage{ position:absolute; inset:0; }
+  #stage canvas{ display:block; width:100% !important; height:100% !important; }
+
+  #bubble{ position:absolute; left:50%; top:14px; transform:translate(-50%,8px);
+    max-width:88%; z-index:20; opacity:0; transition:opacity .25s,transform .25s;
+    background:rgba(255,255,255,.95); border:1px solid rgba(217,120,145,.45);
+    border-radius:16px; padding:11px 15px; font-size:14px; line-height:1.6; color:var(--ink);
+    box-shadow:0 6px 22px rgba(217,120,145,.28); pointer-events:none; }
+  #bubble.show{ opacity:1; transform:translate(-50%,0); }
+  #bubble:after{ content:""; position:absolute; left:50%; bottom:-9px; margin-left:-8px;
+    border:9px solid transparent; border-top-color:rgba(255,255,255,.95); border-bottom:0; }
+
+  #tip{ position:absolute; left:0; right:0; bottom:4px; text-align:center; z-index:15;
+    font-size:11px; color:#8a7d8c; opacity:0; transition:opacity .6s; pointer-events:none;
+    text-shadow:0 1px 3px rgba(255,255,255,.95); }
+</style>
+<script type="importmap">
+{
+  "imports": {
+    "three": "/assets/lib/three.module.js",
+    "three/addons/": "/assets/lib/addons/"
+  }
+}
+</script>
+</head>
+<body>
+
+  <div id="stage"></div>
+  <div id="bubble"></div>
+  <div id="tip">拖动我换位置 · 点我打开聊天</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+/* ===================== 观感参数（改这里就能调） ===================== */
+const MODEL_URL    = '/assets/yujie.glb';  // 御姐模型（黑色包臀皮裙 + 黑丝 + 高跟）
+const AUTO_UPRIGHT = true;   // 生成式 3D 常把"身高"放在 Z 轴，自动立起来
+const YAW          = 0;      // 左右朝向修正（弧度）
+const MARGIN  = 1.10;        // 留白：1.0 = 头顶脚底刚好顶满窗口高度，越大她越小
+const NUDGE_X = 0.030;       // 额外横向微调（占身高比例，负=向左）
+const NUDGE_Y = 0.0;         // 额外纵向微调（占身高比例，正=向上）
+const USE_SKELETON = true;   // 关闭则退回"整身晃动"
+
+/* 自建骨架的关节位置——全部用"占身高比例"表示（脚底 y=0，头顶 y=1） */
+const J = {
+  hip: 0.52, spine: 0.62, chest: 0.72, neck: 0.845, head: 0.90,
+  legX: 0.055, thigh: 0.50, knee: 0.27,
+  armX: 0.118, shoulder: 0.805, elbow: 0.635,
+};
+/* 蒙皮遮罩参数——决定"哪些顶点算手臂/腿"。生成式网格没有骨骼信息，
+   只能按空间区域猜，所以这几个数是可调的（配合实机截图迭代）。 */
+const MASK = {
+  armBandCenter: 0.125,   // 手臂所在 |x|
+  armBandInner: 0.028,    // 带宽内缘（小于此距离=完全算手臂）
+  armBandOuter: 0.062,    // 带宽外缘（大于此距离=完全不算手臂）
+  armBottom: [0.44, 0.50],// 手臂纵向窗口下沿（渐入）
+  armTop:    [0.80, 0.86],// 手臂纵向窗口上沿（渐出）
+  legCut:    [0.42, 0.50],// 腿的纵向分界：y 低于下沿全算腿，避免把裙子带走
+  kneeBlend: [0.22, 0.34],// 大腿/小腿的混合区间
+  armBlend:  [0.54, 0.66],// 上臂/前臂的混合区间
+};
+
+/* ===================== 通用小工具 ===================== */
+const clamp01 = v => v < 0 ? 0 : v > 1 ? 1 : v;
+const smoothstep = (a, b, x) => { const t = clamp01((x - a) / (b - a)); return t * t * (3 - 2 * t); };
+function report(msg){ try { new Image().src = '/api/3dprobe?d=' + encodeURIComponent(msg); } catch (e) {} }
+
+/* ===================== 渲染基础 ===================== */
+const stage = document.getElementById('stage');
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(34, innerWidth / innerHeight, 0.01, 200);
+// preserveDrawingBuffer：为了能读回"屏幕上真实画出来的那一帧"来做取景测量
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.setClearColor(0x000000, 0);         // 背景全透明
+stage.appendChild(renderer.domElement);
+
+scene.add(new THREE.HemisphereLight(0xffffff, 0x9aa4b8, 1.6));
+const keyL = new THREE.DirectionalLight(0xffffff, 2.0); keyL.position.set(1.3, 2.0, 2.6); scene.add(keyL);
+const fillL = new THREE.DirectionalLight(0xffffff, 1.0); fillL.position.set(-2.2, 1.0, 1.4); scene.add(fillL);
+const rimL = new THREE.DirectionalLight(0xcdd9ff, 1.5); rimL.position.set(-0.4, 1.4, -2.6); scene.add(rimL);
+
+let rig = null, bones = null, boneHome = null, baseY = 0, baseH = 1, fitting = false;
+const t0 = performance.now();
+
+function syncSize() {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight, true);
+}
+
+/* ===================== 自动取景（读屏幕真实帧，自校准） =====================
+   为什么不用静态包围盒：生成式 3D 常是蒙皮/非标准姿态，Box3 量到的尺寸和真正渲染出来的
+   形态不一致，直接拿它算相机会让她偏出画面。这里把当前这一帧从显存读回来量真实剪影。 */
+function screenSilhouette() {
+  const gl = renderer.getContext();
+  const W = gl.drawingBufferWidth, H = gl.drawingBufferHeight;
+  const buf = new Uint8Array(W * H * 4);
+  renderer.render(scene, camera);
+  gl.readPixels(0, 0, W, H, gl.RGBA, gl.UNSIGNED_BYTE, buf);
+  let x0 = 1e9, x1 = -1, y0 = 1e9, y1 = -1;
+  for (let y = 0; y < H; y++) {
+    const rowBase = y * W * 4;
+    for (let x = 0; x < W; x++) {
+      if (buf[rowBase + x * 4 + 3] > 8) {
+        if (x < x0) x0 = x; if (x > x1) x1 = x;
+        if (y < y0) y0 = y; if (y > y1) y1 = y;
+      }
+    }
+  }
+  return { x0, x1, y0, y1, W, H };
+}
+
+function autofit() {
+  if (!rig) return;
+  fitting = true;                       // 测量期间暂停动作，避免剪影抖动
+  syncSize();
+  const fov = camera.fov * Math.PI / 180;
+  rig.updateWorldMatrix(true, true);
+  const size = new THREE.Box3().setFromObject(rig).getSize(new THREE.Vector3());
+
+  rig.rotation.y = 0;
+  rig.position.set(0, 0, 0);
+  let dist = Math.max(0.05, (size.y * 1.6 / 2) / Math.tan(fov / 2));
+  let last = null;
+  for (let pass = 0; pass < 3; pass++) {
+    if (pass > 0 && last) rig.position.x = last.px;
+    camera.position.set(0, 0, dist);
+    camera.lookAt(0, 0, 0);
+    const s = screenSilhouette();
+    if (s.x1 < 0) break;
+    const k = (2 * dist * Math.tan(fov / 2)) / s.H;
+    const hW = (s.y1 - s.y0 + 1) * k;
+    const cxW = ((s.x0 + s.x1) / 2 - s.W / 2) * k;
+    const cyW = ((s.y0 + s.y1) / 2 - s.H / 2) * k;
+    const px = (last ? last.px : rig.position.x) - cxW;
+    const py = (last ? last.py : rig.position.y) - cyW;
+    last = { px, py, hW, dist };
+    dist = Math.max(0.05, (hW * MARGIN / 2) / Math.tan(fov / 2));
+    rig.position.x = px;
+    rig.position.y = py;
+  }
+  if (last) {
+    rig.position.x = last.px + NUDGE_X * last.hW;
+    rig.position.y = last.py + NUDGE_Y * last.hW;
+    baseY = rig.position.y;
+    baseH = last.hW;
+    report('autofit win=' + innerWidth + 'x' + innerHeight + ' dpr=' + devicePixelRatio +
+           ' h=' + last.hW.toFixed(3) + ' x=' + rig.position.x.toFixed(3) +
+           ' y=' + rig.position.y.toFixed(3) + ' dist=' + last.dist.toFixed(3));
+  }
+  camera.position.set(0, 0, last ? last.dist : dist);
+  camera.lookAt(0, 0, 0);
+  fitting = false;
+}
+
+/* ===================== 自建骨架 + 蒙皮 =====================
+   生成的网格没有骨骼、没有动画。这里按"占身高比例"把顶点分到 13 根骨头上
+   （脊柱链 + 双腿 + 双臂），做成真正的 SkinnedMesh，于是可以驱动四肢，
+   而不是整张模型一起晃。 */
+const BONE_ORDER = ['hips','spine','chest','neck','head',
+                    'thighL','shinL','thighR','shinR',
+                    'upperArmL','foreArmL','upperArmR','foreArmR'];
+const IDX = {}; BONE_ORDER.forEach((n, i) => IDX[n] = i);
+
+function spineChain(y) {
+  const K = [['hips', J.hip], ['spine', J.spine], ['chest', J.chest],
+             ['neck', J.neck], ['head', J.head]];
+  if (y <= K[0][1]) return { hips: 1 };
+  if (y >= K[K.length - 1][1]) return { head: 1 };
+  for (let i = 0; i < K.length - 1; i++) {
+    const [n0, y0] = K[i], [n1, y1] = K[i + 1];
+    if (y >= y0 && y <= y1) { const t = (y - y0) / (y1 - y0); return { [n0]: 1 - t, [n1]: t }; }
+  }
+  return { head: 1 };
+}
+
+function boneWeights(x, y, z) {
+  const out = new Array(BONE_ORDER.length).fill(0);
+  const ax = Math.abs(x);
+
+  // 腿：只取裙摆以下的区域，避免把裙子一起带走
+  const legMask = 1 - smoothstep(MASK.legCut[0], MASK.legCut[1], y);
+  // 臂：在 |x| 上取一条竖直的"带"，避开躯干（躯干在腰部很窄、肩部很宽）
+  const band = 1 - smoothstep(MASK.armBandInner, MASK.armBandOuter, Math.abs(ax - MASK.armBandCenter));
+  const armMask = band * smoothstep(MASK.armBottom[0], MASK.armBottom[1], y)
+                       * (1 - smoothstep(MASK.armTop[0], MASK.armTop[1], y));
+
+  const limb = Math.min(1, legMask + armMask);
+  const spineShare = 1 - limb;
+
+  const tR = smoothstep(-0.02, 0.02, x);        // 0=左 1=右
+
+  if (legMask > 0) {
+    const L = legMask * (1 - tR), R = legMask * tR;
+    const th = smoothstep(MASK.kneeBlend[0], MASK.kneeBlend[1], y);
+    out[IDX.thighL] += L * th; out[IDX.shinL] += L * (1 - th);
+    out[IDX.thighR] += R * th; out[IDX.shinR] += R * (1 - th);
+  }
+  if (armMask > 0) {
+    const L = armMask * (1 - tR), R = armMask * tR;
+    const up = smoothstep(MASK.armBlend[0], MASK.armBlend[1], y);
+    out[IDX.upperArmL] += L * up; out[IDX.foreArmL] += L * (1 - up);
+    out[IDX.upperArmR] += R * up; out[IDX.foreArmR] += R * (1 - up);
+  }
+  if (spineShare > 0) {
+    const s = spineChain(y);
+    for (const k in s) out[IDX[k]] += s[k] * spineShare;
+  }
+  return out;
+}
+
+function makeBone(name, x, y, z, parent) {
+  const b = new THREE.Bone();
+  b.name = name;
+  b.position.set(x, y, z);
+  if (parent) parent.add(b);
+  return b;
+}
+
+/** 把普通 Mesh 转成手绑骨架的 SkinnedMesh；返回 mesh 与骨架 */
+function rigMesh(srcMesh, mat) {
+  const geo = srcMesh.geometry.clone();
+  srcMesh.updateWorldMatrix(true, false);
+  geo.applyMatrix4(srcMesh.matrixWorld);      // → 世界（已含自动立正）
+  geo.applyMatrix4(mat);                      // → 归一化空间（身高=1，脚底 y=0，x/z 居中）
+
+  const pos = geo.attributes.position;
+  const n = pos.count;
+  const skinIndex = new Uint16Array(n * 4);
+  const skinWeight = new Float32Array(n * 4);
+
+  for (let i = 0; i < n; i++) {
+    const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
+    const w = boneWeights(x, y, z);
+    // 取权重最大的 4 根骨头（three.js 的 skinIndex 只有 4 个槽）
+    const pairs = [];
+    for (let b = 0; b < w.length; b++) if (w[b] > 1e-4) pairs.push([b, w[b]]);
+    pairs.sort((a, c) => c[1] - a[1]);
+    let sum = 0;
+    for (let s = 0; s < 4; s++) {
+      const p = pairs[s];
+      skinIndex[i * 4 + s] = p ? p[0] : 0;
+      skinWeight[i * 4 + s] = p ? p[1] : 0;
+      if (p) sum += p[1];
+    }
+    if (sum > 0) for (let s = 0; s < 4; s++) skinWeight[i * 4 + s] /= sum;
+  }
+  geo.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(skinIndex, 4));
+  geo.setAttribute('skinWeight', new THREE.Float32BufferAttribute(skinWeight, 4));
+
+  // 骨架：位置全部用归一化空间坐标
+  const root = makeBone('root', 0, 0, 0, null);
+  const hips = makeBone('hips', 0, J.hip, 0, root);
+  const spine = makeBone('spine', 0, J.spine - J.hip, 0, hips);
+  const chest = makeBone('chest', 0, J.chest - J.spine, 0, spine);
+  const neck = makeBone('neck', 0, J.neck - J.chest, 0, chest);
+  const head = makeBone('head', 0, J.head - J.neck, 0, neck);
+  const thighL = makeBone('thighL', -J.legX, J.thigh - J.hip, 0, hips);
+  const shinL = makeBone('shinL', 0, J.knee - J.thigh, 0, thighL);
+  const thighR = makeBone('thighR', J.legX, J.thigh - J.hip, 0, hips);
+  const shinR = makeBone('shinR', 0, J.knee - J.thigh, 0, thighR);
+  const upperArmL = makeBone('upperArmL', -J.armX, J.shoulder - J.chest, 0, chest);
+  const foreArmL = makeBone('foreArmL', -0.012, J.elbow - J.shoulder, 0, upperArmL);
+  const upperArmR = makeBone('upperArmR', J.armX, J.shoulder - J.chest, 0, chest);
+  const foreArmR = makeBone('foreArmR', 0.012, J.elbow - J.shoulder, 0, upperArmR);
+
+  const B = { root, hips, spine, chest, neck, head, thighL, shinL, thighR, shinR,
+              upperArmL, foreArmL, upperArmR, foreArmR };
+  const ordered = BONE_ORDER.map(nm => B[nm]);
+  const skeleton = new THREE.Skeleton(ordered);
+
+  const skinned = new THREE.SkinnedMesh(geo, srcMesh.material);
+  skinned.add(root);
+  skinned.bind(skeleton);
+  skinned.frustumCulled = false;
+  return { skinned, bones: B };
+}
+
+/* ===================== 加载模型 ===================== */
+new GLTFLoader().load(MODEL_URL, (gltf) => {
+  const rootScene = gltf.scene;
+
+  // 1) 立正：身高方向可能是 X/Y/Z 任一根轴（生成式 3D 常见 Z 朝上）
+  const fix = new THREE.Group();
+  fix.add(rootScene);
+  fix.updateWorldMatrix(true, true);
+  const bb0 = new THREE.Box3().setFromObject(fix);
+  const sz0 = bb0.getSize(new THREE.Vector3());
+  if (AUTO_UPRIGHT) {
+    if (sz0.z >= sz0.y && sz0.z >= sz0.x)      fix.rotation.x = -Math.PI / 2;
+    else if (sz0.x > sz0.y && sz0.x >= sz0.z)  fix.rotation.z =  Math.PI / 2;
+  }
+  fix.rotation.y += YAW;
+
+  // 2) 归一化矩阵：身高=1、脚底 y=0、xz 居中
+  fix.updateWorldMatrix(true, true);
+  const bb1 = new THREE.Box3().setFromObject(fix);
+  const s1 = bb1.getSize(new THREE.Vector3());
+  const c1 = bb1.getCenter(new THREE.Vector3());
+  const norm = new THREE.Matrix4()
+    .makeScale(1 / s1.y, 1 / s1.y, 1 / s1.y)
+    .multiply(new THREE.Matrix4().makeTranslation(-c1.x, -bb1.min.y, -c1.z));
+
+  // 3) 找到网格
+  let srcMesh = null;
+  rootScene.traverse(o => { if (!srcMesh && o.isMesh && o.geometry && o.geometry.attributes.position) srcMesh = o; });
+  if (!srcMesh) { report('no-mesh'); return; }
+
+  const holder = new THREE.Group();
+  let info = 'raw=' + sz0.x.toFixed(2) + 'x' + sz0.y.toFixed(2) + 'x' + sz0.z.toFixed(2);
+
+  if (USE_SKELETON) {
+    const r = rigMesh(srcMesh, norm);
+    holder.add(r.skinned);
+    bones = r.bones;
+    boneHome = {};
+    for (const k in bones) {
+      boneHome[k] = { px: bones[k].position.x, py: bones[k].position.y, pz: bones[k].position.z,
+                      rx: bones[k].rotation.x, ry: bones[k].rotation.y, rz: bones[k].rotation.z };
+    }
+    info += ' skinned verts=' + r.skinned.geometry.attributes.position.count;
+  } else {
+    const geo = srcMesh.geometry.clone();
+    srcMesh.updateWorldMatrix(true, false);
+    geo.applyMatrix4(srcMesh.matrixWorld);
+    geo.applyMatrix4(norm);
+    holder.add(new THREE.Mesh(geo, srcMesh.material));
+    info += ' plain';
+  }
+  holder.position.set(0, -0.5, 0);      // 归一化空间里身高=1、脚底=0 → 中心在 0.5，挪回原点
+
+  rig = new THREE.Group();
+  rig.add(holder);
+  scene.add(rig);
+  rig.updateWorldMatrix(true, true);
+  report('loaded ' + MODEL_URL + ' ' + info);
+
+  autofit();
+  setTimeout(autofit, 700);
+  setTimeout(autofit, 2000);
+}, undefined, (err) => report('loadfail ' + (err && err.message ? err.message : err)));
+
+let rzTimer = null;
+addEventListener('resize', () => {
+  syncSize();
+  clearTimeout(rzTimer);
+  rzTimer = setTimeout(autofit, 300);
+});
+
+/* ===================== 待机动作（局部肢体，整身绝对不漂） =====================
+   用户明确要求：
+   · 要肢体动作（不扭曲）
+   · 不要整身在画面里漂移（不像幽灵）
+   所以原则是：
+   1) rig.position / rig.rotation 完全固定；整身就站在那里。
+   2) 只在头/手臂这种"局部关节"上做极小角度动作。
+   3) 不做 Y 轴旋转（那是绕身高方向转，会让整身像在左右漂移）。 */
+function animateBones(t) {
+  if (!bones || !boneHome) return;
+  const B = bones;
+  const br  = Math.sin(t * 1.4);                 // 呼吸（唯一允许作用于躯干的"全身"动作）
+  const arm = Math.sin(t * 0.9);                 // 手臂前后摆
+  const armZ = Math.sin(t * 0.7 + 1.3);          // 手臂侧面轻微外摆
+  const look = Math.sin(t * 0.35);               // 视线/头偏
+
+  // 整身唯一允许的"活着感"：极轻微的呼吸起伏
+  //   注意：缩放中心在 rig 原点，缩放 0.003 = 高度 1.0 时上下动 3px
+  rig.scale.set(1, 1 + br * 0.003, 1);
+
+  // ---- 头部：极小偏转（脖子根轻微左右看） ----
+  B.neck.rotation.y = look * 0.025;              // ≤ 1.5°
+  B.neck.rotation.x = 0;
+  B.head.rotation.y = 0;
+  B.head.rotation.x = 0;
+
+  // ---- 手臂：自然前后摆 + 极小外摆 ----
+  B.upperArmL.rotation.x = arm * 0.06;           // 前后 ≈ 3.4°
+  B.upperArmR.rotation.x = -arm * 0.06;
+  B.upperArmL.rotation.z = -0.015 + armZ * 0.015;// 极小外摆
+  B.upperArmR.rotation.z =  0.015 + armZ * 0.015;
+  B.foreArmL.rotation.x  = -0.10 - arm * 0.025;
+  B.foreArmR.rotation.x  = -0.10 + arm * 0.025;
+
+  // ---- 腿：极轻的"重心左右承重交换"（< 1°，脚不离地，整身不漂） ----
+  const w = Math.sin(t * 0.45);                  // 极慢的承重摆
+  B.thighL.rotation.x = w * 0.008;               // 0.46° 内外摆
+  B.thighR.rotation.x = -w * 0.008;
+  B.shinL.rotation.x  = 0;
+  B.shinR.rotation.x  = 0;
+  // 胯以下关节全部锁死
+  B.hips.rotation.x = 0; B.hips.rotation.y = 0; B.hips.rotation.z = 0;
+  B.hips.position.x = 0; B.hips.position.y = 0;
+  B.spine.rotation.x = 0; B.spine.rotation.y = 0; B.spine.rotation.z = 0;
+  B.chest.rotation.x = 0; B.chest.rotation.y = 0; B.chest.rotation.z = 0;
+}
+
+(function loop(){
+  requestAnimationFrame(loop);
+  const t = (performance.now() - t0) / 1000;
+  if (rig && !fitting){
+    if (USE_SKELETON && bones) {
+      animateBones(t);                          // 局部关节 + 整身呼吸缩放
+      rig.rotation.x = 0;                       // 整身姿态锁死
+      rig.rotation.y = 0;
+      rig.rotation.z = 0;
+      rig.position.x = 0;
+      rig.position.y = baseY;                   // 整身位置锁死（呼吸由 rig.scale 表达，不动位置）
+    } else {
+      rig.rotation.y = Math.sin(t * 0.55) * 0.045;
+      rig.position.y = baseY + Math.sin(t * 0.9) * 0.006 * baseH;
+      rig.scale.set(1, 1 + Math.sin(t * 1.6) * 0.006, 1);
+    }
+  }
+  renderer.render(scene, camera);
+})();
+
+/* ===================== 气泡 + 语音（与 Live2D 版一致） ===================== */
+(function(){
+  const bubble = document.getElementById('bubble');
+  const tip = document.getElementById('tip');
+  let seq = 0, bubbleTimer = null, curAudio = null;
+
+  function say(text, audioUri){
+    bubble.textContent = text;
+    bubble.classList.add('show');
+    clearTimeout(bubbleTimer);
+    bubbleTimer = setTimeout(function(){ bubble.classList.remove('show'); },
+                             Math.min(14000, 4200 + text.length * 190));
+    if (audioUri){
+      try{
+        if (curAudio) curAudio.pause();
+        curAudio = new Audio(audioUri);
+        curAudio.play().catch(function(e){ console.warn('audio blocked', e); });
+      }catch(e){}
+    }
+  }
+  function poll(){
+    fetch('/api/last?since=' + seq).then(function(r){ return r.json(); })
+      .then(function(j){ if (j && j.fresh && j.reply){ seq = j.seq; say(j.reply, j.audio); } })
+      .catch(function(){});
+  }
+  fetch('/api/history').then(function(r){ return r.json(); }).then(function(j){
+    if (j && typeof j.seq === 'number') seq = j.seq;
+  }).catch(function(){}).then(function(){ poll(); setInterval(poll, 1200); });
+
+  setTimeout(function(){ tip.style.opacity = 0.9; }, 600);
+  setTimeout(function(){ tip.style.opacity = 0; }, 7000);
+  window.xiaoyunSay = function(text){ if (text) say(text, null); };
+})();
+</script>
+</body>
+</html>
