@@ -55,10 +55,13 @@ JOBS += [
     if os.path.isfile(os.path.join(XY_DOCS, f))
 ]
 
-# 仓库外还散着一份早期版 README_OR_PROXY.md（旧版 99% 内容已在仓库版中），
-# 一并镜像，避免根目录留一份过期文档误导人。
-JOBS.append((os.path.join(REPO, "or_proxy", "README_OR_PROXY.md"),
-             os.path.join(WORKSPACE, "README_OR_PROXY.md")))
+# 仓库外还散着一份早期版 README_OR_PROXY.md（旧版 99% 内容已在仓库版中）。
+# 该路径位于 E 盘 Junction 下，ACL 只给 Everyone:(RX)，非提权进程写不进去也改不了 ACL，
+# 因此作为「尽力而为」的可选镜像：能写就同步，不能写只提示，绝不影响仓库内一致性判定。
+OPTIONAL_JOBS = [
+    (os.path.join(REPO, "or_proxy", "README_OR_PROXY.md"),
+     os.path.join(WORKSPACE, "README_OR_PROXY.md")),
+]
 
 
 def same(a, b):
@@ -82,6 +85,21 @@ def main():
         if not check:
             os.makedirs(os.path.dirname(dst), exist_ok=True)
             shutil.copy2(src, dst)
+
+    # 可选镜像单独处理：失败只提示，不计入 changed，也不让 --check 永远返回 1
+    for src, dst in OPTIONAL_JOBS:
+        label = os.path.relpath(dst, WORKSPACE).replace("\\", "/")
+        if not os.path.isfile(src) or same(src, dst):
+            continue
+        if check:
+            print("  [可选·待同步] %s（目标不可写时会跳过）" % label)
+            continue
+        try:
+            shutil.copy2(src, dst)
+            print("  [可选·已同步] %s" % label)
+        except OSError as e:
+            print("  [可选·跳过] %s：目标不可写（%s）；需提权后再跑，不影响仓库内文档"
+                  % (label, type(e).__name__))
 
     print("同步方向: 各处真源 -> project-nn/docs；编号文档再镜像回 xiaoyun/docs（均单向）")
     print("更新 %d / 已一致 %d / 源缺失 %d" % (len(changed), len(skipped), len(missing)))
