@@ -55,6 +55,11 @@ JOBS += [
     if os.path.isfile(os.path.join(XY_DOCS, f))
 ]
 
+# 仓库外还散着一份早期版 README_OR_PROXY.md（旧版 99% 内容已在仓库版中），
+# 一并镜像，避免根目录留一份过期文档误导人。
+JOBS.append((os.path.join(REPO, "or_proxy", "README_OR_PROXY.md"),
+             os.path.join(WORKSPACE, "README_OR_PROXY.md")))
+
 
 def same(a, b):
     if not os.path.isfile(a) or not os.path.isfile(b):
