@@ -330,14 +330,14 @@ REPLACES = [
     ("docs/00-文档索引与当前实况.md",
      "| `project-nn/docs/`（本目录） | **发布副本 / 唯一对外真源**：编号文档 00~18 + 专题 + `调研报告/` | ✅ 是 |",
      "| `project-nn/docs/`（本目录） | **发布副本 / 唯一对外真源**：编号文档 00~18 + 专题 + `调研报告/`（含索引 README） | ✅ 是 |\n"
-     "| `project-nn/README.md` | 仓库门面，由 `calibrate_readme_20261105.py` 校准 | ✅ 是 |\n"
+     "| `project-nn/README.md` | 仓库门面（产品向精简版，118 行）；实况数字由 `calibrate_readme_20261105.py` 事实校验 | ✅ 是 |\n"
      "| `project-nn/迁移历程总结_*.md` | 九天改造全记录 + 阶段七续篇 | ✅ 是 |"),
     ("docs/00-文档索引与当前实况.md",
      "- 一次性校准脚本 `tools/calibrate_docs_20261105.py` 保留为本次修订的审计记录，可重复执行且幂等。",
      "- 一次性校准脚本 `tools/calibrate_docs_20261105.py`（编号文档）、"
-     "`calibrate_docs_round2_20261105.py`（迁移历程与各 README）、"
-     "`calibrate_readme_20261105.py`（主 README）保留为审计记录，均可重复执行且幂等；\n"
-     "  三者都支持 `--check`，推 GitHub 前应全部返回 0 变更。"),
+     "`calibrate_docs_round2_20261105.py`（迁移历程与各 README）保留为审计记录，均可重复执行且幂等；\n"
+     "  `calibrate_readme_20261105.py` 已随 2026-11-05 主 README 重写为**事实校验**（关键内容齐全 + 旧数字不回流），不再做替换。\n"
+     "  三者都支持 `--check`，推 GitHub 前应全部返回 0。"),
 ]
 
 
