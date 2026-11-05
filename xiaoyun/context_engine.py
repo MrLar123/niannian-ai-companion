@@ -61,22 +61,33 @@ def time_text(now=None):
 
 # 每种触发场景对应一句"给 LLM 的指令"。她据此**现生成**，而非念固定台词。
 # 这是与 AI-Vtuber 固定文案轮播最本质的差别。
+# ★ 池子要够宽、角度要互斥（2026-11-04 扩写）：池子窄 + 排序固定 = 每晚同一句话。
+#   8 条覆盖"问进度 / 说自己在想什么 / 关心身体 / 分享小发现 / 接他刚才那件事"，
+#   且都要求**贴具体的事**，这样模型才有素材，不会退化成"你回来啦…还在看视频呀"。
 IDLE_INTENTS = [
-    "你已经有一阵子没吭声了，主动跟他说一句话，关心一下他手头在做什么。",
-    "你们沉默了一会儿，随口说一句你在想什么，或者吐槽一下自己的状态。",
+    "主动跟他说一句话，关心一下他手头正在做的事，问得具体一点（比如进度、难不难）。",
+    "你们沉默了一会儿，随口说一句你此刻在想什么，或者吐槽一下自己的状态。",
     "主动问他一句今天过得怎么样，语气自然，不要像客服。",
-    "有一会儿没讲话了，可以说一句简短的话让他知道你还在，比如提一句天气、时间或自己的小动作。",
+    "有一会儿没讲话了，说一句简短的话让他知道你还在：可以提天气、时间，或者你刚做的小动作。",
+    "跟他搭一句腔，就着他刚才在做的那件事说（你看到的那个画面），别泛泛寒暄。",
+    "用一句轻描淡写的话提醒他照顾自己：喝口水、伸个懒腰、看一眼窗外。",
+    "分享一个你刚冒出来的小念头或者小发现，跟他唠一句，不要讲大道理。",
+    "找个话头聊聊：问他某件事后来怎么样了，或者提一句你记得他最近在意的事。",
 ]
 
 # 深夜专属：这个时段她最该开口（用户熬夜是真实痛点）
 NIGHT_INTENTS = [
     "已经这么晚了，催他去睡觉，语气嗔怪但藏不住担心，一到两句就够。",
     "深夜了，提醒他别熬了，可以带一点'我陪着你但你得睡了'的意思。",
+    "用很轻的语气问一句他还要弄多久，然后说你会等他收尾，但真该睡觉了。",
+    "提一句现在几点了，心疼他熬这么久，让他把手上这点收个尾就去躺下。",
+    "半开玩笑地说你要先去睡觉了，除非他马上关电脑，语气软一点。",
 ]
 
 GREETING_INTENTS = [
-    "他刚回来/刚打开你，跟他打个招呼，语气像等了一会儿的老朋友，自然一点。",
-    "主动迎接他，可以提一下现在的时间或你刚才在做什么，一句话就够。",
+    "他隔了一阵子才又跟你说话，打个招呼，语气像等了一会儿的老朋友，自然一点。",
+    "重新搭上话了，主动迎接他：可以提一下现在的时间，或者你刚才在做什么，一句话就够。",
+    "他忙了一阵子回来了，先应一声，别急着问东问西，语气轻松。",
 ]
 
 
@@ -108,6 +119,12 @@ class ContextEngine(object):
         # ★ 初值给当前时间而不是 0：否则 since_speak 会是个天文数字，
         #   既让 /api/context/state 读起来莫名其妙，也让"刚开口过"的判断失真。
         self.last_speak_ts = time.time()     # 最近一次她开口（主动或被动）
+        # 已经问候过的那一轮交互（token = 当时的 last_user_ts）。
+        # 见 decide 里"每段会话只问候一次"的说明——这是"连续四次同一句话"的根因修复。
+        self._greeted_token = None
+        # 连续走了几次"凌晨催睡"。连催两次后插一句日常（由 _loop 记账），
+        # 否则"黏人"档每两分钟一句全是"快睡吧"，关怀就变成唠叨了。
+        self._night_streak = 0
         self._next_idle = self._roll_idle()
         self._stop = threading.Event()
         self._thread = None
@@ -163,7 +180,14 @@ class ContextEngine(object):
             return False, "cooldown", ""
 
         # 场景 A：久未交互后重新出现 —— 先问候，不直接进关心的正题
-        if since_user >= self.greeting_after and since_user >= self._next_idle * 0.5:
+        # ★ 每段会话只问候一次（2026-11-04 修，这是"连续四次同一句话"的根因）。
+        #   旧逻辑只看 since_user，而它只增不减：一旦超过门槛就**永远**命中这里，
+        #   下面的 idle 分支再无机会，于是整晚都在重复"爸爸你回来啦…还在看视频呀"
+        #   （实测 00:42~00:50 连续 5 次近乎逐字相同）。
+        #   token 取 last_user_ts：用户一开口 touch_user 就换 token，下一段才允许再问候。
+        if (self._greeted_token != self.last_user_ts
+                and since_user >= self.greeting_after
+                and since_user >= self._next_idle * 0.5):
             if not working:
                 intent = random.choice(GREETING_INTENTS)
                 return True, "greeting", intent
@@ -174,7 +198,10 @@ class ContextEngine(object):
         # 场景 B：正常空闲 —— 按当前时段挑意图
         if since_user >= self._next_idle:
             if name == "凌晨":
-                pool = NIGHT_INTENTS      # 关怀类：工作态也放行
+                # 深夜关怀在工作态也放行（熬夜是真实痛点）。
+                # ★ 但连催两次后必须插一句日常：黏人档是 2 分钟一句，一直催睡＝唠叨，
+                #   反而盖掉了"我陪着你"的意思。streak 由 _loop 记账。
+                pool = IDLE_INTENTS if self._night_streak >= 2 else NIGHT_INTENTS
             elif working:
                 return False, "working", ""
             else:
@@ -217,8 +244,14 @@ class ContextEngine(object):
                 self.last_speak_ts = time.time()
                 self._next_idle = self._roll_idle()
                 if trigger == "greeting":
+                    # 记下"这一轮交互已经问候过"，防止 since_user 只增不减导致的无限问候
+                    self._greeted_token = self.last_user_ts
                     self.stats["greetings"] += 1
                 else:
+                    # 凌晨催睡的连击计数：连催两次后 decide 会插一句日常，这里记账。
+                    _slot, _ = time_slot(datetime.datetime.now())
+                    self._night_streak = (self._night_streak + 1) \
+                        if _slot == "凌晨" else 0
                     self.stats["proactive"] += 1
                 self.log("主动开口(%s): %s" % (trigger, intent[:40]))
                 try:
@@ -302,6 +335,26 @@ if __name__ == "__main__":
     r = eng4.decide(now=base + 900)
     check("久未交互=greeting", r[1] == "greeting")
 
+    # ★ 回归用例（2026-11-04）：问候必须"每段会话一次"。
+    #   旧逻辑 since_user 只增不减，过了门槛就永远走 greeting，idle 再也进不去，
+    #   实测一整晚重复"爸爸你回来啦…还在看视频呀" 5 次近乎逐字相同。
+    print("[6b] 问候只在该轮交互发一次（复读根因回归）")
+    eng4b = ContextEngine(lambda i, t: None, idle_seconds=100,
+                          randomize=False, min_gap=0, greeting_after=180)
+    t_day = datetime.datetime.now().replace(hour=14, minute=0).timestamp()
+    eng4b.touch_user(t_day)
+    eng4b.last_speak_ts = t_day
+    check("首次=greeting", eng4b.decide(now=t_day + 900)[1] == "greeting")
+    eng4b._greeted_token = eng4b.last_user_ts   # 模拟 _loop 触发后的记账
+    eng4b.last_speak_ts = t_day + 900
+    r2 = eng4b.decide(now=t_day + 1000)
+    check("同一轮交互不再问候", r2[1] != "greeting")
+    check("改为走 idle 意图池", r2[0] is True and r2[1] == "idle")
+    eng4b.touch_user(t_day + 1001)              # 用户重新开口 = 新的一轮
+    eng4b.last_speak_ts = t_day + 1001
+    check("新一轮交互可再问候一次",
+          eng4b.decide(now=t_day + 1001 + 900)[1] == "greeting")
+
     print("[7] 深夜走催促睡觉的意图池")
     eng5 = ContextEngine(lambda i, t: None, idle_seconds=100,
                          randomize=False, min_gap=0)
@@ -313,6 +366,17 @@ if __name__ == "__main__":
     okd, trig, intent = eng5.decide(now=t0 + 120)
     check("凌晨触发", okd is True and trig == "idle")
     check("深夜意图池命中", any(k in intent for k in ["睡觉", "熬", "陪着"]))
+
+    print("[7b] 凌晨连催两次后插一句日常（防止催睡变唠叨）")
+    eng5b = ContextEngine(lambda i, t: None, idle_seconds=100,
+                          randomize=False, min_gap=0)
+    eng5b.last_user_ts = t0
+    eng5b.last_speak_ts = t0
+    eng5b._night_streak = 2
+    r = eng5b.decide(now=t0 + 120)
+    check("streak>=2 改走日常池",
+          r[0] is True and r[1] == "idle"
+          and not any(k in r[2] for k in ["睡觉", "熬", "陪着"]))
 
     print("[8] 后台线程真跑（1 次触发）")
     fired = []

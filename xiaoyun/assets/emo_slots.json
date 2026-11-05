@@ -1,0 +1,3063 @@
+{
+  "_meta": {
+    "tool": "tools/pmx_emo_lab.mjs calib",
+    "at": "2026-11-04T20:01:37",
+    "score": "头部区域 72×72 灰度平均绝对差（0~255）",
+    "note": "slots[槽位] = [{name,w}]，w 是配方权重的放大系数；idle = 常驻微笑与其权重"
+  },
+  "kafka_yoga": {
+    "slots": {
+      "smile": [
+        {
+          "name": "にこり",
+          "w": 1
+        }
+      ],
+      "angry": [
+        {
+          "name": "ｷﾘｯ",
+          "w": 1
+        }
+      ],
+      "sad": [
+        {
+          "name": "困る",
+          "w": 1.4
+        }
+      ],
+      "calm": [
+        {
+          "name": "なごみ",
+          "w": 1
+        }
+      ],
+      "shock": [
+        {
+          "name": "はちゅ目",
+          "w": 1
+        }
+      ],
+      "half": [
+        {
+          "name": "じと目",
+          "w": 1
+        }
+      ],
+      "blush": [
+        {
+          "name": "__tint",
+          "w": 0.7
+        }
+      ]
+    },
+    "idle": {
+      "name": "にこり",
+      "w": 0.55,
+      "ce": 0.01
+    },
+    "_diag": {
+      "meshes": 1,
+      "morphs": 70,
+      "noise": 0,
+      "labels": {
+        "happy": 2.46,
+        "soft": 3.31,
+        "annoyed": 1.19,
+        "jealous": 2.04,
+        "shy": 3.42,
+        "sad": 1.32,
+        "tired": 1.54,
+        "curious": 3.11
+      },
+      "labelsArea": {
+        "happy": 1.28,
+        "soft": 1.48,
+        "annoyed": 0.69,
+        "jealous": 1.09,
+        "shy": 1.32,
+        "sad": 0.66,
+        "tired": 0.82,
+        "curious": 1.45
+      },
+      "labelsPeak": {
+        "happy": 18,
+        "soft": 29.2,
+        "annoyed": 7.6,
+        "jealous": 14.2,
+        "shy": 22.3,
+        "sad": 11.9,
+        "tired": 11.7,
+        "curious": 27
+      },
+      "scores": {
+        "smile": 0.62,
+        "smileBlinkCos": 0.01,
+        "angry": 1.008,
+        "sad": 0.625,
+        "calm": 3.209,
+        "shock": 3.02,
+        "half": 1.328,
+        "blush": 1.098
+      },
+      "at": "2026-11-04T22:16:28"
+    }
+  },
+  "rover": {
+    "slots": {
+      "smile": [
+        {
+          "name": "にこり",
+          "w": 1
+        }
+      ],
+      "angry": [
+        {
+          "name": "怒りB",
+          "w": 1
+        }
+      ],
+      "sad": [
+        {
+          "name": "困るB",
+          "w": 1
+        }
+      ],
+      "calm": [
+        {
+          "name": "なごみ",
+          "w": 1
+        }
+      ],
+      "shock": [
+        {
+          "name": "はちゅ目",
+          "w": 1
+        }
+      ],
+      "half": [
+        {
+          "name": "瞳小",
+          "w": 1
+        }
+      ],
+      "blush": [
+        {
+          "name": "__tint",
+          "w": 0.6
+        }
+      ]
+    },
+    "idle": {
+      "name": "にこり",
+      "w": 0.55,
+      "ce": 0.39
+    },
+    "_diag": {
+      "meshes": 1,
+      "morphs": 113,
+      "noise": 0,
+      "labels": {
+        "happy": 2.2,
+        "soft": 3.63,
+        "annoyed": 2.98,
+        "jealous": 3.9,
+        "shy": 3.08,
+        "sad": 3.24,
+        "tired": 2.17,
+        "curious": 2.95
+      },
+      "labelsArea": {
+        "happy": 0.8,
+        "soft": 1.36,
+        "annoyed": 1.14,
+        "jealous": 1.19,
+        "shy": 0.91,
+        "sad": 1.23,
+        "tired": 0.97,
+        "curious": 1
+      },
+      "labelsPeak": {
+        "happy": 23.8,
+        "soft": 35.9,
+        "annoyed": 31.4,
+        "jealous": 47.7,
+        "shy": 26.6,
+        "sad": 34.9,
+        "tired": 19.4,
+        "curious": 34
+      },
+      "scores": {
+        "smile": 0.948,
+        "smileBlinkCos": 0.36,
+        "angry": 2.53,
+        "sad": 3.036,
+        "calm": 3.245,
+        "shock": 2.594,
+        "half": 1.334,
+        "blush": 1.015
+      },
+      "at": "2026-11-04T22:16:41"
+    }
+  },
+  "gengchen": {
+    "slots": {
+      "smile": [
+        {
+          "name": "にこり",
+          "w": 1
+        }
+      ],
+      "angry": [
+        {
+          "name": "ｷﾘｯ",
+          "w": 1.6
+        }
+      ],
+      "sad": [
+        {
+          "name": "困る",
+          "w": 1.4
+        }
+      ],
+      "calm": [
+        {
+          "name": "なごみ",
+          "w": 1
+        }
+      ],
+      "shock": [
+        {
+          "name": "はちゅ目",
+          "w": 1
+        }
+      ],
+      "half": [
+        {
+          "name": "じと目",
+          "w": 1.6
+        }
+      ],
+      "blush": [
+        {
+          "name": "__tint",
+          "w": 0.6
+        }
+      ]
+    },
+    "idle": {
+      "name": "にこり",
+      "w": 0.55,
+      "ce": 0.29
+    },
+    "_diag": {
+      "meshes": 1,
+      "morphs": 36,
+      "noise": 0,
+      "labels": {
+        "happy": 3.29,
+        "soft": 4.75,
+        "annoyed": 1.42,
+        "jealous": 2.58,
+        "shy": 3.86,
+        "sad": 1.73,
+        "tired": 1.87,
+        "curious": 3.8
+      },
+      "labelsArea": {
+        "happy": 1.58,
+        "soft": 1.92,
+        "annoyed": 0.55,
+        "jealous": 1.25,
+        "shy": 1.62,
+        "sad": 0.58,
+        "tired": 0.71,
+        "curious": 1.71
+      },
+      "labelsPeak": {
+        "happy": 26.7,
+        "soft": 46.8,
+        "annoyed": 15.3,
+        "jealous": 21.5,
+        "shy": 23.3,
+        "sad": 23.7,
+        "tired": 22.9,
+        "curious": 32.9
+      },
+      "scores": {
+        "smile": 1.177,
+        "smileBlinkCos": 0.29,
+        "angry": 1.079,
+        "sad": 1.115,
+        "calm": 4.302,
+        "shock": 3.454,
+        "half": 1.238,
+        "blush": 1.116
+      },
+      "at": "2026-11-04T22:16:50"
+    }
+  },
+  "yowane": {
+    "slots": {
+      "smile": [
+        {
+          "name": "にこり",
+          "w": 1
+        }
+      ],
+      "angry": [
+        {
+          "name": "怒り",
+          "w": 1
+        }
+      ],
+      "sad": [
+        {
+          "name": "困る",
+          "w": 1.4
+        }
+      ],
+      "calm": [
+        {
+          "name": "なごみ",
+          "w": 1
+        }
+      ],
+      "shock": [
+        {
+          "name": "はぅ",
+          "w": 1
+        }
+      ],
+      "half": [
+        {
+          "name": "瞳小",
+          "w": 1
+        }
+      ],
+      "blush": [
+        {
+          "name": "__tint",
+          "w": 0.6
+        }
+      ]
+    },
+    "idle": {
+      "name": "にこり",
+      "w": 0.55,
+      "ce": 0.02
+    },
+    "_diag": {
+      "meshes": 1,
+      "morphs": 85,
+      "noise": 0,
+      "labels": {
+        "happy": 3,
+        "soft": 5.56,
+        "annoyed": 2.68,
+        "jealous": 2.87,
+        "shy": 4.02,
+        "sad": 1.94,
+        "tired": 3.43,
+        "curious": 5.09
+      },
+      "labelsArea": {
+        "happy": 1.43,
+        "soft": 2.16,
+        "annoyed": 1.11,
+        "jealous": 1.31,
+        "shy": 1.58,
+        "sad": 0.89,
+        "tired": 1.03,
+        "curious": 1.87
+      },
+      "labelsPeak": {
+        "happy": 23.9,
+        "soft": 55,
+        "annoyed": 24.7,
+        "jealous": 24.8,
+        "shy": 27,
+        "sad": 16.4,
+        "tired": 43.5,
+        "curious": 53.1
+      },
+      "scores": {
+        "smile": 0.918,
+        "smileBlinkCos": 0.02,
+        "angry": 1.222,
+        "sad": 0.899,
+        "calm": 5.341,
+        "shock": 4.946,
+        "half": 3.242,
+        "blush": 1.288
+      },
+      "at": "2026-11-04T22:17:06"
+    }
+  },
+  "wuluo": {
+    "slots": {
+      "smile": [
+        {
+          "name": "にこり",
+          "w": 1
+        }
+      ],
+      "angry": [
+        {
+          "name": "ｷﾘｯ",
+          "w": 1.6
+        }
+      ],
+      "sad": [
+        {
+          "name": "眼角下",
+          "w": 1.4
+        }
+      ],
+      "calm": [
+        {
+          "name": "なごみ",
+          "w": 1
+        }
+      ],
+      "shock": [
+        {
+          "name": "はちゅ目",
+          "w": 1
+        }
+      ],
+      "half": [
+        {
+          "name": "瞳小",
+          "w": 1
+        }
+      ],
+      "blush": [
+        {
+          "name": "__tint",
+          "w": 0.7
+        }
+      ]
+    },
+    "idle": {
+      "name": "にこり",
+      "w": 0.55,
+      "ce": 0
+    },
+    "_diag": {
+      "meshes": 1,
+      "morphs": 47,
+      "noise": 0,
+      "labels": {
+        "happy": 3.29,
+        "soft": 4.94,
+        "annoyed": 2.37,
+        "jealous": 2.15,
+        "shy": 4.31,
+        "sad": 1.92,
+        "tired": 2.63,
+        "curious": 4.25
+      },
+      "labelsArea": {
+        "happy": 1.55,
+        "soft": 1.91,
+        "annoyed": 0.86,
+        "jealous": 1.07,
+        "shy": 1.53,
+        "sad": 0.87,
+        "tired": 0.78,
+        "curious": 1.76
+      },
+      "labelsPeak": {
+        "happy": 26.4,
+        "soft": 49,
+        "annoyed": 27.6,
+        "jealous": 16.5,
+        "shy": 34.6,
+        "sad": 17.3,
+        "tired": 36.4,
+        "curious": 39.4
+      },
+      "scores": {
+        "smile": 0.936,
+        "smileBlinkCos": 0,
+        "angry": 1.284,
+        "sad": 1.195,
+        "calm": 4.729,
+        "shock": 4.086,
+        "half": 2.174,
+        "blush": 1.07
+      },
+      "at": "2026-11-04T22:17:16"
+    }
+  },
+  "luotianyi": {
+    "slots": {
+      "smile": [
+        {
+          "name": "にこり",
+          "w": 1
+        }
+      ],
+      "angry": [
+        {
+          "name": "怒り",
+          "w": 1
+        }
+      ],
+      "sad": [
+        {
+          "name": "困る",
+          "w": 1
+        }
+      ],
+      "calm": [
+        {
+          "name": "なごみ",
+          "w": 1
+        }
+      ],
+      "shock": [
+        {
+          "name": "はぅ",
+          "w": 1
+        }
+      ],
+      "half": [
+        {
+          "name": "じと目",
+          "w": 1
+        }
+      ],
+      "blush": [
+        {
+          "name": "__tint",
+          "w": 0.6
+        }
+      ]
+    },
+    "idle": {
+      "name": "にこり",
+      "w": 0.55,
+      "ce": 0
+    },
+    "_diag": {
+      "meshes": 1,
+      "morphs": 69,
+      "noise": 0,
+      "labels": {
+        "happy": 4.54,
+        "soft": 9.64,
+        "annoyed": 3.43,
+        "jealous": 3.65,
+        "shy": 7.69,
+        "sad": 2.84,
+        "tired": 4.64,
+        "curious": 7.9
+      },
+      "labelsArea": {
+        "happy": 2.09,
+        "soft": 3.4,
+        "annoyed": 1.65,
+        "jealous": 1.78,
+        "shy": 2.73,
+        "sad": 1.36,
+        "tired": 1.94,
+        "curious": 2.9
+      },
+      "labelsPeak": {
+        "happy": 33.1,
+        "soft": 90.4,
+        "annoyed": 24.3,
+        "jealous": 24.7,
+        "shy": 46.5,
+        "sad": 21.3,
+        "tired": 40.3,
+        "curious": 73.4
+      },
+      "scores": {
+        "smile": 1.276,
+        "smileBlinkCos": 0,
+        "angry": 1.789,
+        "sad": 1.53,
+        "calm": 9.246,
+        "shock": 7.596,
+        "half": 4.26,
+        "blush": 2.29
+      },
+      "at": "2026-11-04T22:17:28"
+    }
+  },
+  "xiaoyu": {
+    "slots": {
+      "smile": [
+        {
+          "name": "にっこり",
+          "w": 1
+        }
+      ],
+      "angry": [
+        {
+          "name": "怒り目",
+          "w": 1
+        }
+      ],
+      "sad": [
+        {
+          "name": "悲しむ",
+          "w": 1
+        }
+      ],
+      "calm": [
+        {
+          "name": "なごみ",
+          "w": 1
+        }
+      ],
+      "shock": [
+        {
+          "name": "びっくり",
+          "w": 1
+        }
+      ],
+      "half": [
+        {
+          "name": "ジト目",
+          "w": 1
+        }
+      ],
+      "blush": [
+        {
+          "name": "__tint",
+          "w": 0.5
+        }
+      ]
+    },
+    "idle": {
+      "name": "にこり",
+      "w": 0.55,
+      "ce": 0
+    },
+    "_diag": {
+      "meshes": 1,
+      "morphs": 77,
+      "noise": 0,
+      "labels": {
+        "happy": 4.82,
+        "soft": 5.02,
+        "annoyed": 3.91,
+        "jealous": 2.47,
+        "shy": 4.49,
+        "sad": 3.45,
+        "tired": 4.13,
+        "curious": 1.57
+      },
+      "labelsArea": {
+        "happy": 1.93,
+        "soft": 2.2,
+        "annoyed": 1.76,
+        "jealous": 1.19,
+        "shy": 1.92,
+        "sad": 1.61,
+        "tired": 1.87,
+        "curious": 0.87
+      },
+      "labelsPeak": {
+        "happy": 53.2,
+        "soft": 43.8,
+        "annoyed": 36.3,
+        "jealous": 21.6,
+        "shy": 29.2,
+        "sad": 31,
+        "tired": 37.9,
+        "curious": 11.3
+      },
+      "scores": {
+        "smile": 2.929,
+        "smileBlinkCos": 0,
+        "angry": 2.804,
+        "sad": 2.412,
+        "calm": 4.74,
+        "shock": 1.36,
+        "half": 3.804,
+        "blush": 1.129
+      },
+      "at": "2026-11-04T22:17:40"
+    }
+  },
+  "elysia": {
+    "slots": {
+      "smile": [
+        {
+          "name": "にこり",
+          "w": 1
+        }
+      ],
+      "angry": [
+        {
+          "name": "ｷﾘｯ",
+          "w": 1
+        }
+      ],
+      "sad": [
+        {
+          "name": "眼角下",
+          "w": 1
+        }
+      ],
+      "calm": [
+        {
+          "name": "なごみ",
+          "w": 1
+        }
+      ],
+      "shock": [
+        {
+          "name": "はちゅ目",
+          "w": 1
+        }
+      ],
+      "half": [
+        {
+          "name": "瞳小",
+          "w": 1
+        }
+      ],
+      "blush": [
+        {
+          "name": "__tint",
+          "w": 0.5
+        }
+      ]
+    },
+    "idle": {
+      "name": "にこり",
+      "w": 0.55,
+      "ce": 0
+    },
+    "_diag": {
+      "meshes": 1,
+      "morphs": 55,
+      "noise": 0,
+      "labels": {
+        "happy": 4.46,
+        "soft": 6.78,
+        "annoyed": 2.44,
+        "jealous": 3.93,
+        "shy": 7.55,
+        "sad": 2.44,
+        "tired": 3.53,
+        "curious": 5.8
+      },
+      "labelsArea": {
+        "happy": 2.13,
+        "soft": 2.47,
+        "annoyed": 1.13,
+        "jealous": 1.6,
+        "shy": 3.45,
+        "sad": 1.31,
+        "tired": 1.57,
+        "curious": 2.29
+      },
+      "labelsPeak": {
+        "happy": 33.2,
+        "soft": 65.8,
+        "annoyed": 21.2,
+        "jealous": 38.7,
+        "shy": 46.4,
+        "sad": 14.9,
+        "tired": 32.3,
+        "curious": 53.8
+      },
+      "scores": {
+        "smile": 1.401,
+        "smileBlinkCos": 0,
+        "angry": 2.332,
+        "sad": 1.75,
+        "calm": 6.394,
+        "shock": 5.503,
+        "half": 3.535,
+        "blush": 2.81
+      },
+      "at": "2026-11-04T22:17:48"
+    }
+  },
+  "feixue": {
+    "slots": {
+      "smile": [
+        {
+          "name": "笑い",
+          "w": 0.7
+        }
+      ],
+      "angry": [
+        {
+          "name": "怒り",
+          "w": 1.6
+        },
+        {
+          "name": "恐ろしい子！",
+          "w": 1.6
+        }
+      ],
+      "sad": [
+        {
+          "name": "悲しい目",
+          "w": 1.4
+        }
+      ],
+      "calm": [
+        {
+          "name": "笑い",
+          "w": 0.6
+        }
+      ],
+      "shock": [
+        {
+          "name": "はちゅ",
+          "w": 2
+        }
+      ],
+      "half": [
+        {
+          "name": "瞳小",
+          "w": 1.6
+        }
+      ],
+      "blush": [
+        {
+          "name": "__tint",
+          "w": 0.3
+        }
+      ]
+    },
+    "idle": {
+      "name": "にこり",
+      "w": 0.55,
+      "ce": 0.26
+    },
+    "_diag": {
+      "meshes": 1,
+      "morphs": 138,
+      "noise": 0,
+      "labels": {
+        "happy": 1.69,
+        "soft": 1.22,
+        "annoyed": 1.27,
+        "jealous": 1.38,
+        "shy": 1.84,
+        "sad": 1.45,
+        "tired": 1.57,
+        "curious": 2.19
+      },
+      "labelsArea": {
+        "happy": 0.78,
+        "soft": 0.65,
+        "annoyed": 0.48,
+        "jealous": 0.68,
+        "shy": 0.51,
+        "sad": 0.65,
+        "tired": 0.51,
+        "curious": 0.62
+      },
+      "labelsPeak": {
+        "happy": 16.3,
+        "soft": 9.8,
+        "annoyed": 15.6,
+        "jealous": 12.8,
+        "shy": 9.1,
+        "sad": 15.4,
+        "tired": 21.3,
+        "curious": 33.5
+      },
+      "scores": {
+        "smile": 1.694,
+        "smileBlinkCos": 0.98,
+        "smileClosedEye": 1,
+        "angry": 1.18,
+        "sad": 0.852,
+        "shock": 1.83,
+        "half": 1.245,
+        "blush": 1.203,
+        "calm": 1.704,
+        "calmFrom": "smile"
+      },
+      "at": "2026-11-04T22:18:15"
+    }
+  },
+  "feixue2": {
+    "slots": {
+      "smile": [
+        {
+          "name": "笑い",
+          "w": 0.7
+        }
+      ],
+      "angry": [
+        {
+          "name": "怒り",
+          "w": 1.6
+        },
+        {
+          "name": "恐ろしい子！",
+          "w": 1.6
+        }
+      ],
+      "sad": [
+        {
+          "name": "悲しい目",
+          "w": 1.4
+        }
+      ],
+      "calm": [
+        {
+          "name": "笑い",
+          "w": 0.6
+        }
+      ],
+      "shock": [
+        {
+          "name": "はちゅ",
+          "w": 2
+        }
+      ],
+      "half": [
+        {
+          "name": "瞳小",
+          "w": 1.6
+        }
+      ],
+      "blush": [
+        {
+          "name": "__tint",
+          "w": 0.5
+        }
+      ]
+    },
+    "idle": {
+      "name": "笑い目",
+      "w": 0.22,
+      "ce": 0.89
+    },
+    "_diag": {
+      "meshes": 1,
+      "morphs": 138,
+      "noise": 0,
+      "labels": {
+        "happy": 1.3,
+        "soft": 0.89,
+        "annoyed": 0.88,
+        "jealous": 1.06,
+        "shy": 1.85,
+        "sad": 1.1,
+        "tired": 1.14,
+        "curious": 1.88
+      },
+      "labelsArea": {
+        "happy": 0.68,
+        "soft": 0.52,
+        "annoyed": 0.37,
+        "jealous": 0.56,
+        "shy": 0.36,
+        "sad": 0.55,
+        "tired": 0.46,
+        "curious": 0.52
+      },
+      "labelsPeak": {
+        "happy": 11,
+        "soft": 6,
+        "annoyed": 10.1,
+        "jealous": 9.1,
+        "shy": 8.1,
+        "sad": 10.5,
+        "tired": 13.6,
+        "curious": 29.2
+      },
+      "scores": {
+        "smile": 1.3,
+        "smileBlinkCos": 0.99,
+        "smileClosedEye": 1,
+        "angry": 0.854,
+        "sad": 0.613,
+        "shock": 1.64,
+        "half": 0.872,
+        "blush": 1.434,
+        "calm": 1.317,
+        "calmFrom": "smile"
+      },
+      "at": "2026-11-04T22:18:43"
+    }
+  },
+  "qianxi": {
+    "slots": {
+      "smile": [
+        {
+          "name": "にこり",
+          "w": 1
+        }
+      ],
+      "angry": [
+        {
+          "name": "怒りB",
+          "w": 1
+        }
+      ],
+      "sad": [
+        {
+          "name": "困るB",
+          "w": 1
+        }
+      ],
+      "calm": [
+        {
+          "name": "なごみ",
+          "w": 1
+        }
+      ],
+      "shock": [
+        {
+          "name": "はぅ",
+          "w": 1
+        }
+      ],
+      "half": [
+        {
+          "name": "瞳小",
+          "w": 1
+        }
+      ],
+      "blush": [
+        {
+          "name": "__tint",
+          "w": 0.5
+        }
+      ]
+    },
+    "idle": {
+      "name": "にこり",
+      "w": 0.55,
+      "ce": 0.08
+    },
+    "_diag": {
+      "meshes": 1,
+      "morphs": 176,
+      "noise": 0,
+      "labels": {
+        "happy": 2.98,
+        "soft": 5.46,
+        "annoyed": 3.19,
+        "jealous": 4.75,
+        "shy": 5.74,
+        "sad": 4.09,
+        "tired": 2.95,
+        "curious": 4.11
+      },
+      "labelsArea": {
+        "happy": 1.23,
+        "soft": 1.64,
+        "annoyed": 1.43,
+        "jealous": 1.69,
+        "shy": 2.9,
+        "sad": 1.62,
+        "tired": 1.23,
+        "curious": 1.3
+      },
+      "labelsPeak": {
+        "happy": 29.2,
+        "soft": 69.2,
+        "annoyed": 26.1,
+        "jealous": 48.3,
+        "shy": 37,
+        "sad": 39.9,
+        "tired": 29.9,
+        "curious": 49.5
+      },
+      "scores": {
+        "smile": 1.085,
+        "smileBlinkCos": 0.08,
+        "angry": 2.802,
+        "sad": 3.917,
+        "calm": 5.167,
+        "shock": 3.86,
+        "half": 1.488,
+        "blush": 2.784
+      },
+      "at": "2026-11-04T22:19:10"
+    }
+  },
+  "kafka": {
+    "slots": {
+      "smile": [
+        {
+          "name": "にこり",
+          "w": 1
+        }
+      ],
+      "angry": [
+        {
+          "name": "ｷﾘｯ",
+          "w": 1
+        }
+      ],
+      "sad": [
+        {
+          "name": "困る",
+          "w": 1.4
+        }
+      ],
+      "calm": [
+        {
+          "name": "なごみ",
+          "w": 1
+        }
+      ],
+      "shock": [
+        {
+          "name": "はちゅ目",
+          "w": 1
+        }
+      ],
+      "half": [
+        {
+          "name": "じと目",
+          "w": 1
+        }
+      ],
+      "blush": [
+        {
+          "name": "__tint",
+          "w": 0.5
+        }
+      ]
+    },
+    "idle": {
+      "name": "にこり",
+      "w": 0.55,
+      "ce": 0
+    },
+    "_diag": {
+      "meshes": 1,
+      "morphs": 66,
+      "noise": 0,
+      "labels": {
+        "happy": 2.85,
+        "soft": 3.67,
+        "annoyed": 1.46,
+        "jealous": 2.4,
+        "shy": 3.94,
+        "sad": 1.36,
+        "tired": 1.74,
+        "curious": 3.54
+      },
+      "labelsArea": {
+        "happy": 1.36,
+        "soft": 1.54,
+        "annoyed": 0.79,
+        "jealous": 1.29,
+        "shy": 1.43,
+        "sad": 0.59,
+        "tired": 0.85,
+        "curious": 1.49
+      },
+      "labelsPeak": {
+        "happy": 24.3,
+        "soft": 34.6,
+        "annoyed": 10.8,
+        "jealous": 16.6,
+        "shy": 30.4,
+        "sad": 14.3,
+        "tired": 14.6,
+        "curious": 34.3
+      },
+      "scores": {
+        "smile": 0.618,
+        "smileBlinkCos": 0,
+        "angry": 1.062,
+        "sad": 0.708,
+        "calm": 3.562,
+        "shock": 3.462,
+        "half": 1.524,
+        "blush": 1.086
+      },
+      "at": "2026-11-04T22:19:19"
+    }
+  },
+  "peier": {
+    "slots": {
+      "smile": [
+        {
+          "name": "喜び",
+          "w": 1
+        }
+      ],
+      "angry": [
+        {
+          "name": "怒り",
+          "w": 1
+        },
+        {
+          "name": "恐ろしい子！",
+          "w": 1.6
+        }
+      ],
+      "sad": [
+        {
+          "name": "困る",
+          "w": 1.4
+        }
+      ],
+      "calm": [
+        {
+          "name": "笑い",
+          "w": 0.6
+        }
+      ],
+      "shock": [
+        {
+          "name": "びっくり",
+          "w": 1
+        }
+      ],
+      "half": [
+        {
+          "name": "瞳小",
+          "w": 1
+        }
+      ],
+      "blush": [
+        {
+          "name": "__tint",
+          "w": 0.5
+        }
+      ]
+    },
+    "idle": {
+      "name": "にやり",
+      "w": 0.55,
+      "ce": 0
+    },
+    "_diag": {
+      "meshes": 1,
+      "morphs": 32,
+      "noise": 0,
+      "labels": {
+        "happy": 3.38,
+        "soft": 6.06,
+        "annoyed": 3.32,
+        "jealous": 3.3,
+        "shy": 5.43,
+        "sad": 1.87,
+        "tired": 2.78,
+        "curious": 1.69
+      },
+      "labelsArea": {
+        "happy": 1.67,
+        "soft": 2.32,
+        "annoyed": 1.41,
+        "jealous": 1.51,
+        "shy": 1.88,
+        "sad": 0.98,
+        "tired": 1.32,
+        "curious": 0.87
+      },
+      "labelsPeak": {
+        "happy": 25.8,
+        "soft": 60.7,
+        "annoyed": 34.2,
+        "jealous": 30.5,
+        "shy": 38.3,
+        "sad": 14.7,
+        "tired": 25.5,
+        "curious": 13.1
+      },
+      "scores": {
+        "smile": 0.934,
+        "smileBlinkCos": 0.49,
+        "angry": 3.664,
+        "sad": 0.241,
+        "calm": 6.793,
+        "shock": 1.433,
+        "half": 2.682,
+        "blush": 1.681,
+        "calmFrom": "smile"
+      },
+      "at": "2026-11-04T22:19:26"
+    }
+  },
+  "ganyu": {
+    "slots": {
+      "smile": [
+        {
+          "name": "にこり",
+          "w": 1
+        }
+      ],
+      "angry": [
+        {
+          "name": "怒り目",
+          "w": 1
+        }
+      ],
+      "sad": [
+        {
+          "name": "眼角下",
+          "w": 1
+        }
+      ],
+      "calm": [
+        {
+          "name": "なごみ",
+          "w": 1
+        }
+      ],
+      "shock": [
+        {
+          "name": "びっくり",
+          "w": 1
+        }
+      ],
+      "half": [
+        {
+          "name": "ジト目",
+          "w": 1
+        }
+      ],
+      "blush": [
+        {
+          "name": "__tint",
+          "w": 0.4
+        }
+      ]
+    },
+    "idle": {
+      "name": "にこり",
+      "w": 0.55,
+      "ce": 0.01
+    },
+    "_diag": {
+      "meshes": 1,
+      "morphs": 60,
+      "noise": 0,
+      "labels": {
+        "happy": 4.07,
+        "soft": 7.4,
+        "annoyed": 5.18,
+        "jealous": 3.01,
+        "shy": 6.29,
+        "sad": 3.83,
+        "tired": 5.16,
+        "curious": 1.61
+      },
+      "labelsArea": {
+        "happy": 1.84,
+        "soft": 2.93,
+        "annoyed": 1.93,
+        "jealous": 1.29,
+        "shy": 2.07,
+        "sad": 1.42,
+        "tired": 1.88,
+        "curious": 0.69
+      },
+      "labelsPeak": {
+        "happy": 31.3,
+        "soft": 61.8,
+        "annoyed": 48.5,
+        "jealous": 27.2,
+        "shy": 44.8,
+        "sad": 39.2,
+        "tired": 50.4,
+        "curious": 16.3
+      },
+      "scores": {
+        "smile": 1.002,
+        "smileBlinkCos": 0.01,
+        "angry": 3.214,
+        "sad": 2.244,
+        "calm": 7.183,
+        "shock": 1.482,
+        "half": 4.92,
+        "blush": 1.632
+      },
+      "at": "2026-11-04T22:19:34"
+    }
+  },
+  "raiden": {
+    "slots": {
+      "smile": [
+        {
+          "name": "にこり",
+          "w": 1
+        }
+      ],
+      "angry": [
+        {
+          "name": "怒り目",
+          "w": 1
+        }
+      ],
+      "sad": [
+        {
+          "name": "眼角下",
+          "w": 1
+        }
+      ],
+      "calm": [
+        {
+          "name": "なごみ",
+          "w": 1
+        }
+      ],
+      "shock": [
+        {
+          "name": "びっくり",
+          "w": 1
+        }
+      ],
+      "half": [
+        {
+          "name": "ジト目",
+          "w": 1
+        }
+      ],
+      "blush": [
+        {
+          "name": "__tint",
+          "w": 0.4
+        }
+      ]
+    },
+    "idle": {
+      "name": "にこり",
+      "w": 0.55,
+      "ce": 0.01
+    },
+    "_diag": {
+      "meshes": 1,
+      "morphs": 64,
+      "noise": 0,
+      "labels": {
+        "happy": 3.64,
+        "soft": 6.76,
+        "annoyed": 4.86,
+        "jealous": 2.34,
+        "shy": 5.71,
+        "sad": 2.97,
+        "tired": 4.75,
+        "curious": 1.7
+      },
+      "labelsArea": {
+        "happy": 1.38,
+        "soft": 2.17,
+        "annoyed": 1.41,
+        "jealous": 0.98,
+        "shy": 1.62,
+        "sad": 1.14,
+        "tired": 1.46,
+        "curious": 0.82
+      },
+      "labelsPeak": {
+        "happy": 34.5,
+        "soft": 73.7,
+        "annoyed": 62.3,
+        "jealous": 22.2,
+        "shy": 51.7,
+        "sad": 30,
+        "tired": 59.4,
+        "curious": 13.4
+      },
+      "scores": {
+        "smile": 2,
+        "smileBlinkCos": 0.01,
+        "angry": 3.128,
+        "sad": 1.558,
+        "calm": 6.389,
+        "shock": 1.468,
+        "half": 4.584,
+        "blush": 1.494
+      },
+      "at": "2026-11-04T22:19:43"
+    }
+  },
+  "huangquan": {
+    "slots": {
+      "smile": [
+        {
+          "name": "にやり３",
+          "w": 1
+        }
+      ],
+      "angry": [
+        {
+          "name": "ｷﾘｯ",
+          "w": 1
+        }
+      ],
+      "sad": [
+        {
+          "name": "困る",
+          "w": 1
+        }
+      ],
+      "calm": [
+        {
+          "name": "なごみ",
+          "w": 1
+        }
+      ],
+      "shock": [
+        {
+          "name": "はちゅ目",
+          "w": 1
+        }
+      ],
+      "half": [
+        {
+          "name": "じと目",
+          "w": 1
+        }
+      ],
+      "blush": [
+        {
+          "name": "照れ",
+          "w": 1
+        }
+      ]
+    },
+    "idle": {
+      "name": "にやり２",
+      "w": 0.55,
+      "ce": 0
+    },
+    "_diag": {
+      "meshes": 1,
+      "morphs": 82,
+      "noise": 0,
+      "labels": {
+        "happy": 3.36,
+        "soft": 5.59,
+        "annoyed": 1.4,
+        "jealous": 2.33,
+        "shy": 4.54,
+        "sad": 1.36,
+        "tired": 1.31,
+        "curious": 4.6
+      },
+      "labelsArea": {
+        "happy": 0.98,
+        "soft": 0.84,
+        "annoyed": 0.36,
+        "jealous": 0.68,
+        "shy": 1.24,
+        "sad": 0.34,
+        "tired": 0.43,
+        "curious": 0.78
+      },
+      "labelsPeak": {
+        "happy": 45.1,
+        "soft": 99.8,
+        "annoyed": 23.1,
+        "jealous": 31.8,
+        "shy": 64.6,
+        "sad": 20.1,
+        "tired": 17.5,
+        "curious": 80.3
+      },
+      "scores": {
+        "smile": 2.148,
+        "smileBlinkCos": 0,
+        "angry": 1.143,
+        "sad": 1.138,
+        "calm": 5.412,
+        "shock": 4.472,
+        "half": 1.092,
+        "blush": 1.012
+      },
+      "at": "2026-11-04T22:19:53"
+    }
+  },
+  "nier42_swim": {
+    "slots": {
+      "smile": [
+        {
+          "name": "にこり",
+          "w": 1
+        }
+      ],
+      "angry": [
+        {
+          "name": "怒り",
+          "w": 1
+        }
+      ],
+      "sad": [
+        {
+          "name": "困る",
+          "w": 1
+        }
+      ],
+      "calm": [
+        {
+          "name": "なごみ",
+          "w": 1
+        }
+      ],
+      "shock": [
+        {
+          "name": "はちゅ目",
+          "w": 1
+        }
+      ],
+      "half": [
+        {
+          "name": "瞳小",
+          "w": 1
+        }
+      ],
+      "blush": [
+        {
+          "name": "__tint",
+          "w": 0.4
+        }
+      ]
+    },
+    "idle": {
+      "name": "にこり",
+      "w": 0.55,
+      "ce": 0.02
+    },
+    "_diag": {
+      "meshes": 1,
+      "morphs": 68,
+      "noise": 0,
+      "labels": {
+        "happy": 4.3,
+        "soft": 8.26,
+        "annoyed": 2.91,
+        "jealous": 4.17,
+        "shy": 6.66,
+        "sad": 2.72,
+        "tired": 3.14,
+        "curious": 6.65
+      },
+      "labelsArea": {
+        "happy": 1.57,
+        "soft": 2.34,
+        "annoyed": 1.04,
+        "jealous": 1.69,
+        "shy": 1.75,
+        "sad": 0.94,
+        "tired": 1.06,
+        "curious": 2.24
+      },
+      "labelsPeak": {
+        "happy": 42.8,
+        "soft": 102.5,
+        "annoyed": 26.5,
+        "jealous": 34.6,
+        "shy": 54.1,
+        "sad": 28.2,
+        "tired": 33.6,
+        "curious": 73.2
+      },
+      "scores": {
+        "smile": 1.719,
+        "smileBlinkCos": 0.02,
+        "angry": 1.84,
+        "sad": 1.779,
+        "calm": 7.832,
+        "shock": 6.337,
+        "half": 2.803,
+        "blush": 2.16
+      },
+      "at": "2026-11-04T22:20:07"
+    }
+  },
+  "jiuyuan_yoga": {
+    "slots": {
+      "smile": [
+        {
+          "name": "にこり",
+          "w": 1
+        }
+      ],
+      "angry": [
+        {
+          "name": "ｷﾘｯ",
+          "w": 1
+        }
+      ],
+      "sad": [
+        {
+          "name": "困る",
+          "w": 1.4
+        }
+      ],
+      "calm": [
+        {
+          "name": "笑い",
+          "w": 0.6
+        }
+      ],
+      "shock": [
+        {
+          "name": "びっくり",
+          "w": 1
+        }
+      ],
+      "half": [
+        {
+          "name": "じと目",
+          "w": 1
+        }
+      ],
+      "blush": [
+        {
+          "name": "__tint",
+          "w": 0.5
+        }
+      ]
+    },
+    "idle": {
+      "name": "にこり",
+      "w": 0.55,
+      "ce": 0
+    },
+    "_diag": {
+      "meshes": 1,
+      "morphs": 27,
+      "noise": 0,
+      "labels": {
+        "happy": 2.15,
+        "soft": 2.95,
+        "annoyed": 1.07,
+        "jealous": 1.34,
+        "shy": 4.49,
+        "sad": 1.37,
+        "tired": 1.39,
+        "curious": 1.44
+      },
+      "labelsArea": {
+        "happy": 1.04,
+        "soft": 1.19,
+        "annoyed": 0.42,
+        "jealous": 0.61,
+        "shy": 1.73,
+        "sad": 0.63,
+        "tired": 0.64,
+        "curious": 0.68
+      },
+      "labelsPeak": {
+        "happy": 17.3,
+        "soft": 30.4,
+        "annoyed": 11.9,
+        "jealous": 12.7,
+        "shy": 21.6,
+        "sad": 12.7,
+        "tired": 13.5,
+        "curious": 12.8
+      },
+      "scores": {
+        "smile": 1.292,
+        "smileBlinkCos": 0,
+        "angry": 1.119,
+        "sad": 0.988,
+        "shock": 1.164,
+        "half": 1.12,
+        "blush": 2.608,
+        "calm": 3.516,
+        "calmFrom": "smile"
+      },
+      "at": "2026-11-04T22:20:17"
+    }
+  },
+  "kafka_vest": {
+    "slots": {
+      "smile": [
+        {
+          "name": "笑い",
+          "w": 0.7
+        }
+      ],
+      "angry": [
+        {
+          "name": "ｷﾘｯ",
+          "w": 1.6
+        }
+      ],
+      "sad": [
+        {
+          "name": "困る",
+          "w": 1
+        }
+      ],
+      "calm": [
+        {
+          "name": "なごみ",
+          "w": 1
+        }
+      ],
+      "shock": [
+        {
+          "name": "はぅ",
+          "w": 1
+        }
+      ],
+      "half": [
+        {
+          "name": "じと目",
+          "w": 1
+        }
+      ],
+      "blush": [
+        {
+          "name": "__tint",
+          "w": 0.85
+        }
+      ]
+    },
+    "idle": {
+      "name": "にこり",
+      "w": 0.55,
+      "ce": 0.09
+    },
+    "_diag": {
+      "meshes": 1,
+      "morphs": 66,
+      "noise": 0,
+      "labels": {
+        "happy": 2.81,
+        "soft": 3.22,
+        "annoyed": 1.22,
+        "jealous": 1.75,
+        "shy": 3.69,
+        "sad": 1.08,
+        "tired": 1.25,
+        "curious": 2.94
+      },
+      "labelsArea": {
+        "happy": 1.36,
+        "soft": 1.53,
+        "annoyed": 0.66,
+        "jealous": 1.04,
+        "shy": 1.52,
+        "sad": 0.59,
+        "tired": 0.76,
+        "curious": 1.46
+      },
+      "labelsPeak": {
+        "happy": 26.6,
+        "soft": 30.5,
+        "annoyed": 10.4,
+        "jealous": 11.4,
+        "shy": 23.1,
+        "sad": 9.2,
+        "tired": 8.3,
+        "curious": 26.3
+      },
+      "scores": {
+        "smile": 1.872,
+        "smileBlinkCos": 0.99,
+        "smileClosedEye": 1,
+        "angry": 1.009,
+        "sad": 0.576,
+        "calm": 3.236,
+        "shock": 2.808,
+        "half": 1.014,
+        "blush": 1.59
+      },
+      "at": "2026-11-04T22:20:35"
+    }
+  },
+  "clukay_summer": {
+    "slots": {
+      "smile": [
+        {
+          "name": "笑い",
+          "w": 0.7
+        },
+        {
+          "name": "口角上げ",
+          "w": 1
+        }
+      ],
+      "angry": [
+        {
+          "name": "ｷﾘｯ",
+          "w": 1
+        }
+      ],
+      "sad": [
+        {
+          "name": "困る",
+          "w": 1.4
+        },
+        {
+          "name": "口角下げ",
+          "w": 1.4
+        }
+      ],
+      "calm": [
+        {
+          "name": "なごみ",
+          "w": 1
+        }
+      ],
+      "shock": [
+        {
+          "name": "はちゅ目",
+          "w": 1
+        }
+      ],
+      "half": [
+        {
+          "name": "瞳小",
+          "w": 1
+        }
+      ],
+      "blush": [
+        {
+          "name": "__tint",
+          "w": 0.5
+        }
+      ]
+    },
+    "idle": {
+      "name": "笑い",
+      "w": 0.22,
+      "ce": 0.93
+    },
+    "_diag": {
+      "meshes": 1,
+      "morphs": 88,
+      "noise": 0,
+      "labels": {
+        "happy": 7.05,
+        "soft": 7.2,
+        "annoyed": 2.37,
+        "jealous": 4.91,
+        "shy": 7.56,
+        "sad": 1.39,
+        "tired": 2.11,
+        "curious": 6.7
+      },
+      "labelsArea": {
+        "happy": 2.07,
+        "soft": 2.06,
+        "annoyed": 1.06,
+        "jealous": 1.58,
+        "shy": 2.05,
+        "sad": 0.62,
+        "tired": 0.71,
+        "curious": 1.99
+      },
+      "labelsPeak": {
+        "happy": 85,
+        "soft": 86.6,
+        "annoyed": 21,
+        "jealous": 56.2,
+        "shy": 72.7,
+        "sad": 13,
+        "tired": 24.9,
+        "curious": 80.8
+      },
+      "scores": {
+        "smile": 5.386,
+        "smileBlinkCos": 0.97,
+        "smileClosedEye": 1,
+        "angry": 1.518,
+        "sad": 0.83,
+        "calm": 6.904,
+        "shock": 6.118,
+        "half": 1.926,
+        "blush": 1.606
+      },
+      "at": "2026-11-04T22:20:47"
+    }
+  },
+  "hades_dengying": {
+    "slots": {
+      "smile": [
+        {
+          "name": "にこり",
+          "w": 1
+        }
+      ],
+      "angry": [
+        {
+          "name": "怒り",
+          "w": 1.6
+        }
+      ],
+      "sad": [
+        {
+          "name": "困る",
+          "w": 1.4
+        }
+      ],
+      "calm": [
+        {
+          "name": "なごみ",
+          "w": 1
+        }
+      ],
+      "shock": [
+        {
+          "name": "はちゅ目",
+          "w": 1
+        }
+      ],
+      "half": [
+        {
+          "name": "瞳小",
+          "w": 1
+        }
+      ],
+      "blush": [
+        {
+          "name": "__tint",
+          "w": 0.6
+        }
+      ]
+    },
+    "idle": {
+      "name": "にこり",
+      "w": 0.55,
+      "ce": 0.14
+    },
+    "_diag": {
+      "meshes": 1,
+      "morphs": 33,
+      "noise": 0,
+      "labels": {
+        "happy": 2.4,
+        "soft": 3.79,
+        "annoyed": 1.52,
+        "jealous": 2.09,
+        "shy": 5.13,
+        "sad": 1.17,
+        "tired": 1.88,
+        "curious": 3.38
+      },
+      "labelsArea": {
+        "happy": 0.97,
+        "soft": 1.27,
+        "annoyed": 0.58,
+        "jealous": 0.98,
+        "shy": 2.79,
+        "sad": 0.5,
+        "tired": 0.58,
+        "curious": 1.18
+      },
+      "labelsPeak": {
+        "happy": 24,
+        "soft": 43.2,
+        "annoyed": 16.9,
+        "jealous": 17.8,
+        "shy": 32.1,
+        "sad": 11.7,
+        "tired": 25.1,
+        "curious": 38.8
+      },
+      "scores": {
+        "smile": 0.535,
+        "smileBlinkCos": 0.14,
+        "angry": 1.055,
+        "sad": 0.789,
+        "calm": 3.606,
+        "shock": 3.272,
+        "half": 1.684,
+        "blush": 2.683
+      },
+      "at": "2026-11-04T22:20:54"
+    }
+  },
+  "nicole_zzz": {
+    "slots": {
+      "smile": [
+        {
+          "name": "にこり",
+          "w": 1.1
+        }
+      ],
+      "angry": [
+        {
+          "name": "怒り目",
+          "w": 1
+        }
+      ],
+      "sad": [
+        {
+          "name": "眼角下",
+          "w": 1
+        }
+      ],
+      "calm": [
+        {
+          "name": "にこり",
+          "w": 0.6
+        }
+      ],
+      "shock": [
+        {
+          "name": "びっくり",
+          "w": 1
+        }
+      ],
+      "half": [
+        {
+          "name": "じと目",
+          "w": 1
+        }
+      ],
+      "blush": [
+        {
+          "name": "__tint",
+          "w": 0.5
+        }
+      ]
+    },
+    "idle": {
+      "name": "にこり",
+      "w": 0.55,
+      "ce": 0.01
+    },
+    "_diag": {
+      "meshes": 1,
+      "morphs": 55,
+      "noise": 0,
+      "labels": {
+        "happy": 0.85,
+        "soft": 0.81,
+        "annoyed": 1.69,
+        "jealous": 2.41,
+        "shy": 2.63,
+        "sad": 2.32,
+        "tired": 2.47,
+        "curious": 3.13
+      },
+      "labelsArea": {
+        "happy": 0.44,
+        "soft": 0.38,
+        "annoyed": 0.82,
+        "jealous": 1.05,
+        "shy": 0.34,
+        "sad": 0.77,
+        "tired": 0.91,
+        "curious": 1.39
+      },
+      "labelsPeak": {
+        "happy": 7.5,
+        "soft": 8.3,
+        "annoyed": 14.6,
+        "jealous": 24.9,
+        "shy": 13.6,
+        "sad": 29.6,
+        "tired": 28.4,
+        "curious": 29.8
+      },
+      "scores": {
+        "smile": 0.849,
+        "smileBlinkCos": 0.01,
+        "angry": 2.53,
+        "sad": 1.965,
+        "shock": 2.792,
+        "half": 2.243,
+        "blush": 2.022,
+        "calm": 0.912,
+        "calmFrom": "smile"
+      },
+      "at": "2026-11-04T22:21:03"
+    }
+  },
+  "yoohee_skin": {
+    "slots": {
+      "smile": [
+        {
+          "name": "笑い",
+          "w": 0.7
+        },
+        {
+          "name": "口角上げ",
+          "w": 1
+        }
+      ],
+      "angry": [
+        {
+          "name": "真面目",
+          "w": 1
+        }
+      ],
+      "sad": [
+        {
+          "name": "困る",
+          "w": 1.4
+        }
+      ],
+      "calm": [
+        {
+          "name": "なごみ",
+          "w": 1
+        }
+      ],
+      "shock": [
+        {
+          "name": "はちゅ目",
+          "w": 1
+        }
+      ],
+      "half": [
+        {
+          "name": "瞳小",
+          "w": 1
+        }
+      ],
+      "blush": [
+        {
+          "name": "__tint",
+          "w": 0.7
+        }
+      ]
+    },
+    "idle": {
+      "name": "笑い",
+      "w": 0.22,
+      "ce": 0.98
+    },
+    "_diag": {
+      "meshes": 1,
+      "morphs": 100,
+      "noise": 0,
+      "labels": {
+        "happy": 7.62,
+        "soft": 7.95,
+        "annoyed": 3.72,
+        "jealous": 5.42,
+        "shy": 8.65,
+        "sad": 2.05,
+        "tired": 3.05,
+        "curious": 7.44
+      },
+      "labelsArea": {
+        "happy": 2.54,
+        "soft": 2.58,
+        "annoyed": 1.63,
+        "jealous": 1.95,
+        "shy": 3.23,
+        "sad": 0.84,
+        "tired": 1.09,
+        "curious": 2.44
+      },
+      "labelsPeak": {
+        "happy": 83.3,
+        "soft": 85.8,
+        "annoyed": 34.9,
+        "jealous": 59,
+        "shy": 74.5,
+        "sad": 21.6,
+        "tired": 37.3,
+        "curious": 81.2
+      },
+      "scores": {
+        "smile": 4.446,
+        "smileBlinkCos": 1,
+        "smileClosedEye": 1,
+        "angry": 2.992,
+        "sad": 1.286,
+        "calm": 7.711,
+        "shock": 7.274,
+        "half": 2.83,
+        "blush": 2.192
+      },
+      "at": "2026-11-04T22:21:19"
+    }
+  },
+  "ainingjing": {
+    "slots": {
+      "smile": [
+        {
+          "name": "にこり",
+          "w": 1
+        }
+      ],
+      "angry": [
+        {
+          "name": "怒り",
+          "w": 1.6
+        }
+      ],
+      "sad": [
+        {
+          "name": "困る",
+          "w": 1.4
+        }
+      ],
+      "calm": [
+        {
+          "name": "なごみ",
+          "w": 1
+        }
+      ],
+      "shock": [
+        {
+          "name": "はちゅ目",
+          "w": 1
+        }
+      ],
+      "half": [
+        {
+          "name": "瞳小",
+          "w": 1
+        }
+      ],
+      "blush": [
+        {
+          "name": "__tint",
+          "w": 0.5
+        }
+      ]
+    },
+    "idle": {
+      "name": "にこり",
+      "w": 0.55,
+      "ce": 0
+    },
+    "_diag": {
+      "meshes": 1,
+      "morphs": 30,
+      "noise": 0,
+      "labels": {
+        "happy": 2.41,
+        "soft": 3.26,
+        "annoyed": 1.58,
+        "jealous": 2.14,
+        "shy": 3.57,
+        "sad": 1.6,
+        "tired": 1.6,
+        "curious": 3.17
+      },
+      "labelsArea": {
+        "happy": 1.02,
+        "soft": 1.23,
+        "annoyed": 0.73,
+        "jealous": 0.98,
+        "shy": 1.12,
+        "sad": 0.71,
+        "tired": 0.61,
+        "curious": 1.15
+      },
+      "labelsPeak": {
+        "happy": 23.4,
+        "soft": 34.3,
+        "annoyed": 13.6,
+        "jealous": 19,
+        "shy": 32.5,
+        "sad": 15.6,
+        "tired": 17.4,
+        "curious": 35.9
+      },
+      "scores": {
+        "smile": 0.728,
+        "smileBlinkCos": 0,
+        "angry": 0.986,
+        "sad": 1.145,
+        "calm": 3.064,
+        "shock": 3.027,
+        "half": 1.444,
+        "blush": 1.032
+      },
+      "at": "2026-11-04T22:21:33"
+    }
+  },
+  "helen_dress": {
+    "slots": {
+      "smile": [
+        {
+          "name": "笑い",
+          "w": 0.7
+        },
+        {
+          "name": "口角上げ",
+          "w": 1
+        }
+      ],
+      "angry": [
+        {
+          "name": "怒り",
+          "w": 1.6
+        }
+      ],
+      "sad": [
+        {
+          "name": "困る",
+          "w": 1.4
+        }
+      ],
+      "calm": [
+        {
+          "name": "なごみ",
+          "w": 1
+        }
+      ],
+      "shock": [
+        {
+          "name": "はちゅ目",
+          "w": 1
+        }
+      ],
+      "half": [
+        {
+          "name": "じと目 ",
+          "w": 1
+        }
+      ],
+      "blush": [
+        {
+          "name": "__tint",
+          "w": 0.5
+        }
+      ]
+    },
+    "idle": {
+      "name": "笑い",
+      "w": 0.22,
+      "ce": 0.98
+    },
+    "_diag": {
+      "meshes": 1,
+      "morphs": 88,
+      "noise": 0,
+      "labels": {
+        "happy": 4.26,
+        "soft": 4.36,
+        "annoyed": 2.06,
+        "jealous": 3.15,
+        "shy": 6.35,
+        "sad": 1.95,
+        "tired": 1.54,
+        "curious": 4
+      },
+      "labelsArea": {
+        "happy": 1.44,
+        "soft": 1.33,
+        "annoyed": 0.72,
+        "jealous": 1.04,
+        "shy": 2.09,
+        "sad": 0.6,
+        "tired": 0.5,
+        "curious": 1.27
+      },
+      "labelsPeak": {
+        "happy": 47.2,
+        "soft": 50.9,
+        "annoyed": 24.2,
+        "jealous": 36.4,
+        "shy": 43,
+        "sad": 26,
+        "tired": 19,
+        "curious": 46.1
+      },
+      "scores": {
+        "smile": 2.557,
+        "smileBlinkCos": 0.98,
+        "smileClosedEye": 1,
+        "angry": 1.315,
+        "sad": 1.54,
+        "calm": 4.146,
+        "shock": 3.866,
+        "half": 1.279,
+        "blush": 2.89
+      },
+      "at": "2026-11-04T22:21:46"
+    }
+  },
+  "wajite_cool": {
+    "slots": {
+      "smile": [
+        {
+          "name": "にこり",
+          "w": 1
+        }
+      ],
+      "angry": [
+        {
+          "name": "ｷﾘｯ",
+          "w": 1.6
+        }
+      ],
+      "sad": [
+        {
+          "name": "眼角下",
+          "w": 1
+        }
+      ],
+      "calm": [
+        {
+          "name": "なごみ",
+          "w": 1
+        }
+      ],
+      "shock": [
+        {
+          "name": "はちゅ目",
+          "w": 1
+        }
+      ],
+      "half": [
+        {
+          "name": "瞳小",
+          "w": 1
+        }
+      ],
+      "blush": [
+        {
+          "name": "__tint",
+          "w": 0.5
+        }
+      ]
+    },
+    "idle": {
+      "name": "にこり",
+      "w": 0.55,
+      "ce": 0
+    },
+    "_diag": {
+      "meshes": 1,
+      "morphs": 50,
+      "noise": 0,
+      "labels": {
+        "happy": 3.05,
+        "soft": 5.26,
+        "annoyed": 1.87,
+        "jealous": 2.15,
+        "shy": 4.02,
+        "sad": 2.09,
+        "tired": 2.01,
+        "curious": 4.3
+      },
+      "labelsArea": {
+        "happy": 1.6,
+        "soft": 1.95,
+        "annoyed": 0.92,
+        "jealous": 0.99,
+        "shy": 1.6,
+        "sad": 1.04,
+        "tired": 1.03,
+        "curious": 1.81
+      },
+      "labelsPeak": {
+        "happy": 21.3,
+        "soft": 56.9,
+        "annoyed": 15.2,
+        "jealous": 18.7,
+        "shy": 26.2,
+        "sad": 16.5,
+        "tired": 16.6,
+        "curious": 41.4
+      },
+      "scores": {
+        "smile": 1,
+        "smileBlinkCos": 0,
+        "angry": 1.359,
+        "sad": 1.524,
+        "calm": 4.928,
+        "shock": 4.035,
+        "half": 1.479,
+        "blush": 1.072
+      },
+      "at": "2026-11-04T22:21:54"
+    }
+  },
+  "furina_mdjsn": {
+    "slots": {
+      "smile": [
+        {
+          "name": "笑い",
+          "w": 0.7
+        }
+      ],
+      "angry": [
+        {
+          "name": "怒り目",
+          "w": 1
+        }
+      ],
+      "sad": [
+        {
+          "name": "悲しむ",
+          "w": 1
+        }
+      ],
+      "calm": [
+        {
+          "name": "なごみ",
+          "w": 1
+        }
+      ],
+      "shock": [
+        {
+          "name": "びっくり",
+          "w": 1
+        }
+      ],
+      "half": [
+        {
+          "name": "ジト目",
+          "w": 1
+        }
+      ],
+      "blush": [
+        {
+          "name": "__tint",
+          "w": 0.6
+        }
+      ]
+    },
+    "idle": {
+      "name": "にこり",
+      "w": 0.55,
+      "ce": 0.02
+    },
+    "_diag": {
+      "meshes": 1,
+      "morphs": 65,
+      "noise": 0,
+      "labels": {
+        "happy": 4.84,
+        "soft": 5.59,
+        "annoyed": 3.01,
+        "jealous": 1.81,
+        "shy": 5.29,
+        "sad": 2.97,
+        "tired": 3.23,
+        "curious": 0.78
+      },
+      "labelsArea": {
+        "happy": 2,
+        "soft": 2.13,
+        "annoyed": 1.18,
+        "jealous": 0.87,
+        "shy": 2.14,
+        "sad": 1.17,
+        "tired": 1.15,
+        "curious": 0.37
+      },
+      "labelsPeak": {
+        "happy": 45.5,
+        "soft": 57.7,
+        "annoyed": 33.1,
+        "jealous": 16.4,
+        "shy": 39.1,
+        "sad": 32.8,
+        "tired": 38.8,
+        "curious": 7.1
+      },
+      "scores": {
+        "smile": 4.004,
+        "smileBlinkCos": 0.99,
+        "smileClosedEye": 1,
+        "angry": 1.825,
+        "sad": 2.205,
+        "calm": 4.709,
+        "shock": 1.117,
+        "half": 2.984,
+        "blush": 1.96
+      },
+      "at": "2026-11-04T22:22:01"
+    }
+  },
+  "yingzhao_swim": {
+    "slots": {
+      "smile": [
+        {
+          "name": "笑い",
+          "w": 0.7
+        }
+      ],
+      "angry": [
+        {
+          "name": "真面目",
+          "w": 1
+        }
+      ],
+      "sad": [
+        {
+          "name": "困る",
+          "w": 1
+        }
+      ],
+      "calm": [
+        {
+          "name": "笑い",
+          "w": 0.6
+        }
+      ],
+      "shock": [
+        {
+          "name": "びっくり",
+          "w": 1
+        }
+      ],
+      "half": [
+        {
+          "name": "瞳小",
+          "w": 1
+        }
+      ],
+      "blush": [
+        {
+          "name": "__tint",
+          "w": 0.4
+        }
+      ]
+    },
+    "idle": {
+      "name": "笑い",
+      "w": 0.22,
+      "ce": 0.84
+    },
+    "_diag": {
+      "meshes": 1,
+      "morphs": 39,
+      "noise": 0,
+      "labels": {
+        "happy": 4.64,
+        "soft": 3.89,
+        "annoyed": 1.72,
+        "jealous": 1.97,
+        "shy": 5.2,
+        "sad": 1.66,
+        "tired": 1.89,
+        "curious": 1.17
+      },
+      "labelsArea": {
+        "happy": 1.49,
+        "soft": 1.3,
+        "annoyed": 0.56,
+        "jealous": 0.44,
+        "shy": 1.45,
+        "sad": 0.55,
+        "tired": 0.63,
+        "curious": 0.54
+      },
+      "labelsPeak": {
+        "happy": 46.3,
+        "soft": 42,
+        "annoyed": 21.3,
+        "jealous": 29.6,
+        "shy": 41.5,
+        "sad": 19.6,
+        "tired": 22.4,
+        "curious": 10.4
+      },
+      "scores": {
+        "smile": 4.643,
+        "smileBlinkCos": 0.87,
+        "smileClosedEye": 1,
+        "angry": 1.241,
+        "sad": 1.224,
+        "shock": 1.607,
+        "half": 1.574,
+        "blush": 2.296,
+        "calm": 4.622,
+        "calmFrom": "smile"
+      },
+      "at": "2026-11-04T22:22:07"
+    }
+  },
+  "ruanmei_mdjsn": {
+    "slots": {
+      "smile": [
+        {
+          "name": "笑い",
+          "w": 0.7
+        },
+        {
+          "name": "口角上げ",
+          "w": 1
+        }
+      ],
+      "angry": [
+        {
+          "name": "ｷﾘｯ",
+          "w": 1
+        }
+      ],
+      "sad": [
+        {
+          "name": "困る",
+          "w": 1
+        }
+      ],
+      "calm": [
+        {
+          "name": "なごみ",
+          "w": 1
+        }
+      ],
+      "shock": [
+        {
+          "name": "はちゅ目",
+          "w": 1
+        }
+      ],
+      "half": [
+        {
+          "name": "じと目",
+          "w": 1
+        }
+      ],
+      "blush": [
+        {
+          "name": "__tint",
+          "w": 1
+        }
+      ]
+    },
+    "idle": {
+      "name": "にこり",
+      "w": 0.55,
+      "ce": 0
+    },
+    "_diag": {
+      "meshes": 1,
+      "morphs": 66,
+      "noise": 0,
+      "labels": {
+        "happy": 3.75,
+        "soft": 4.06,
+        "annoyed": 1.68,
+        "jealous": 2.41,
+        "shy": 4.92,
+        "sad": 1.35,
+        "tired": 1.93,
+        "curious": 3.6
+      },
+      "labelsArea": {
+        "happy": 1.71,
+        "soft": 1.65,
+        "annoyed": 0.87,
+        "jealous": 1.33,
+        "shy": 1.61,
+        "sad": 0.73,
+        "tired": 1.06,
+        "curious": 1.62
+      },
+      "labelsPeak": {
+        "happy": 34.3,
+        "soft": 42.3,
+        "annoyed": 12.9,
+        "jealous": 16.1,
+        "shy": 29.6,
+        "sad": 10.4,
+        "tired": 13.7,
+        "curious": 32.7
+      },
+      "scores": {
+        "smile": 2.933,
+        "smileBlinkCos": 0.96,
+        "smileClosedEye": 1,
+        "angry": 1.172,
+        "sad": 0.532,
+        "calm": 3.744,
+        "shock": 3.402,
+        "half": 1.736,
+        "blush": 1.959
+      },
+      "at": "2026-11-04T22:22:14"
+    }
+  },
+  "raiden_mdjsn": {
+    "slots": {
+      "smile": [
+        {
+          "name": "にこり",
+          "w": 1
+        }
+      ],
+      "angry": [
+        {
+          "name": "怒り目",
+          "w": 1
+        }
+      ],
+      "sad": [
+        {
+          "name": "眼角下",
+          "w": 1
+        }
+      ],
+      "calm": [
+        {
+          "name": "なごみ",
+          "w": 1
+        }
+      ],
+      "shock": [
+        {
+          "name": "びっくり",
+          "w": 2
+        }
+      ],
+      "half": [
+        {
+          "name": "ジト目",
+          "w": 1
+        }
+      ],
+      "blush": [
+        {
+          "name": "__tint",
+          "w": 1
+        }
+      ]
+    },
+    "idle": {
+      "name": "にこり",
+      "w": 0.55,
+      "ce": 0.01
+    },
+    "_diag": {
+      "meshes": 1,
+      "morphs": 67,
+      "noise": 0,
+      "labels": {
+        "happy": 2.58,
+        "soft": 4.6,
+        "annoyed": 3.19,
+        "jealous": 1.22,
+        "shy": 4.38,
+        "sad": 2,
+        "tired": 2.8,
+        "curious": 1.79
+      },
+      "labelsArea": {
+        "happy": 1.24,
+        "soft": 1.88,
+        "annoyed": 1.35,
+        "jealous": 0.68,
+        "shy": 2.03,
+        "sad": 0.89,
+        "tired": 1.15,
+        "curious": 0.98
+      },
+      "labelsPeak": {
+        "happy": 22.2,
+        "soft": 47,
+        "annoyed": 32.3,
+        "jealous": 8.6,
+        "shy": 22.4,
+        "sad": 19.7,
+        "tired": 28.8,
+        "curious": 13.6
+      },
+      "scores": {
+        "smile": 1.336,
+        "smileBlinkCos": 0.01,
+        "angry": 1.813,
+        "sad": 1.094,
+        "calm": 4.362,
+        "shock": 1.622,
+        "half": 2.807,
+        "blush": 2.059
+      },
+      "at": "2026-11-04T22:22:20"
+    }
+  },
+  "xiangnaimei": {
+    "slots": {
+      "smile": [
+        {
+          "name": "にこり",
+          "w": 1
+        }
+      ],
+      "angry": [
+        {
+          "name": "怒り",
+          "w": 1
+        }
+      ],
+      "sad": [
+        {
+          "name": "困る",
+          "w": 1
+        }
+      ],
+      "calm": [
+        {
+          "name": "笑い",
+          "w": 0.6
+        }
+      ],
+      "shock": [
+        {
+          "name": "びっくり",
+          "w": 1
+        }
+      ],
+      "half": [
+        {
+          "name": "じと目",
+          "w": 1
+        }
+      ],
+      "blush": [
+        {
+          "name": "__tint",
+          "w": 0.4
+        }
+      ]
+    },
+    "idle": {
+      "name": "にこり",
+      "w": 0.55,
+      "ce": 0
+    },
+    "_diag": {
+      "meshes": 1,
+      "morphs": 38,
+      "noise": 0,
+      "labels": {
+        "happy": 3.02,
+        "soft": 7.08,
+        "annoyed": 2.84,
+        "jealous": 2.56,
+        "shy": 4.65,
+        "sad": 2.54,
+        "tired": 3.21,
+        "curious": 2.05
+      },
+      "labelsArea": {
+        "happy": 1.38,
+        "soft": 2.07,
+        "annoyed": 1.02,
+        "jealous": 0.79,
+        "shy": 1.5,
+        "sad": 0.89,
+        "tired": 1.12,
+        "curious": 0.76
+      },
+      "labelsPeak": {
+        "happy": 23.2,
+        "soft": 85.1,
+        "annoyed": 30.3,
+        "jealous": 32.6,
+        "shy": 40.8,
+        "sad": 28.7,
+        "tired": 34.5,
+        "curious": 22.5
+      },
+      "scores": {
+        "smile": 1.118,
+        "smileBlinkCos": 0,
+        "angry": 1.876,
+        "sad": 1.674,
+        "shock": 1.868,
+        "half": 2.882,
+        "blush": 1.1,
+        "calm": 7.683,
+        "calmFrom": "smile"
+      },
+      "at": "2026-11-04T22:22:27"
+    }
+  }
+}

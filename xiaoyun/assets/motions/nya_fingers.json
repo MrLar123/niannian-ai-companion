@@ -1,6 +1,8 @@
 {
   "key": "nya_fingers",
-  "label": "手指律动（82 秒·仅手部）",
+  "label": "手指律动（只动手）· 82 秒",
+  "group": "dance",
+  "order": 165,
   "file": "nya_fingers.vmd",
   "note": ""
 }

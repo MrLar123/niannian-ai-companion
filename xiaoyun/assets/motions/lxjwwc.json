@@ -1,6 +1,8 @@
 {
   "key": "lxjwwc",
-  "label": "动作（LXJWWC·10 秒）",
+  "label": "舞蹈 · 10 秒",
+  "group": "dance",
+  "order": 110,
   "file": "lxjwwc.vmd",
   "note": ""
 }

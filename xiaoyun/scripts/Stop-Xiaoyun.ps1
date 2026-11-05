@@ -11,7 +11,8 @@
 #     3) 杀完后**轮询等待进程真正消失**（最多 15 秒），不再拍脑袋 sleep；
 #     4) 复核改为「窗口 + 挂起状态 + catcher 数量」，报告具体残留，退出码 4 表示仍有残留。
 $ErrorActionPreference = "SilentlyContinue"
-$deskPid = "D:\LunaAI\project-nn\xiaoyun\scripts\desktop.pid"
+# ★ 2026-11-01：desktop.pid 实际写在 xiaoyun\ 根（与 desktop_app.py 同目录），scripts\ 下没有
+$deskPid = "D:\LunaAI\project-nn\xiaoyun\desktop.pid"
 $probePy = "D:\LunaAI\project-nn\xiaoyun\.venv\Scripts\python.exe"
 $probeSc = "D:\LunaAI\project-nn\xiaoyun\tools\pet_window_probe.py"
 
@@ -22,9 +23,10 @@ $probeSc = "D:\LunaAI\project-nn\xiaoyun\tools\pet_window_probe.py"
 # ★ 后端曾经被漏掉：它只在"正在监听 8090"时才被杀，若它没绑上端口/卡死/启动失败，
 #   就永远留着一个僵尸后端 —— 下次启动会再起一个，Windows 又允许多进程绑同一端口，
 #   于是两个后端并存、两个语音消费者抢同一条转写（重复回复）。必须一起兜底。
-$stalePatterns = @("*xiaoyun\scripts\xiaoyun_server.py*",
-                   "*xiaoyun\scripts\asr_service.py*",
-                   "*xiaoyun\scripts\desktop_app.py*",
+# ★ 2026-10-24 迁移后服务本体在 xiaoyun\ 根；兼容旧 scripts\ 路径（历史进程可能还在跑）
+$stalePatterns = @("*xiaoyun\xiaoyun_server.py*", "*xiaoyun\scripts\xiaoyun_server.py*",
+                   "*xiaoyun\asr_service.py*",   "*xiaoyun\scripts\asr_service.py*",
+                   "*xiaoyun\desktop_app.py*",   "*xiaoyun\scripts\desktop_app.py*",
                    "*tts\GPT-SoVITS\api_v2.py*")
 
 function Get-XiaoyunStale(){
@@ -151,7 +153,7 @@ if($deskProcs.Count -gt 0){
 
 # 2) 关闭后端（8090）：端口 + 命令行双路（防"没绑上端口的僵尸后端"）
 $srvIds = @(Get-PortPids 8090)
-$srvCmd = @(Get-XiaoyunStale | Where-Object { $_.CommandLine -like "*xiaoyun\scripts\xiaoyun_server.py*" } |
+$srvCmd = @(Get-XiaoyunStale | Where-Object { $_.CommandLine -like "*xiaoyun\xiaoyun_server.py*" -or $_.CommandLine -like "*xiaoyun\scripts\xiaoyun_server.py*" } |
             Select-Object -ExpandProperty ProcessId)
 $srvIds = @(@($srvIds) + @($srvCmd) | Sort-Object -Unique)
 if($srvIds.Count -gt 0){
@@ -162,7 +164,7 @@ if($srvIds.Count -gt 0){
 
 # 3) 关闭语音识别服务（8091：asr_service.py，独立 venv）
 $asrIds = @(Get-PortPids 8091)
-$asrCmd = @(Get-XiaoyunStale | Where-Object { $_.CommandLine -like "*xiaoyun\scripts\asr_service.py*" } |
+$asrCmd = @(Get-XiaoyunStale | Where-Object { $_.CommandLine -like "*xiaoyun\asr_service.py*" -or $_.CommandLine -like "*xiaoyun\scripts\asr_service.py*" } |
             Select-Object -ExpandProperty ProcessId)
 $asrIds = @(@($asrIds) + @($asrCmd) | Sort-Object -Unique)
 if($asrIds.Count -gt 0){

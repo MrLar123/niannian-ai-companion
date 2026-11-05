@@ -127,7 +127,7 @@ Write-Host "=== 小芸桌面启动中 ===" -ForegroundColor Magenta
 # ---------- 1) 对话大脑：OpenRouter 本地代理（or_proxy.py, 8787） ----------
 # 2026-10-18：大脑从本地 Ollama(qwen3.5-9b) 切换到 or_proxy（OpenRouter 免费模型池）。
 # 原因：8GB 显存要让给 Hunyuan3D 3D 形象生成；Ollama 钉驻显存/预热/保活全部移除。
-# 手动方式：双击桌面「启动OpenRouter代理.bat」。
+# 手动方式：双击桌面「启动OpenRouter代理-后台.bat」。
 $orPy  = "C:\Users\Administrator\.workbuddy\binaries\python\versions\3.13.12\python.exe"
 $orApp = "D:\LunaAI\or_proxy.py"
 $orOut = "D:\LunaAI\or_proxy_stdout.log"
@@ -151,7 +151,7 @@ if(Test-Brain){
         if(Test-Brain){ break }
     }
     if(Test-Brain){ Log "[OK] 对话大脑 or_proxy 已启动" }
-    else { Log "[警告] or_proxy 未就绪（可手动双击桌面「启动OpenRouter代理.bat」），文字聊天暂不可用" }
+    else { Log "[警告] or_proxy 未就绪（可手动双击桌面「启动OpenRouter代理-后台.bat」），文字聊天暂不可用" }
 } else {
     Log "[错误] 找不到 $orApp —— 对话大脑不可用"
 }

@@ -1,6 +1,8 @@
 {
   "key": "phut_hon_long",
-  "label": "Phut hon 长版（24 秒）",
+  "label": "Phut hon 慢版 · 24 秒",
+  "group": "dance",
+  "order": 140,
   "file": "phut_hon_long.vmd",
   "note": ""
 }

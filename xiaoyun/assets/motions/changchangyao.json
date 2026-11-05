@@ -1,6 +1,8 @@
 {
   "key": "changchangyao",
-  "label": "常常摇（18 秒）",
+  "label": "常常摇（只动上半身）· 18 秒",
+  "group": "dance",
+  "order": 125,
   "file": "changchangyao.vmd",
   "note": ""
 }

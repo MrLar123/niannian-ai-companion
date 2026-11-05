@@ -1,6 +1,8 @@
 {
   "key": "xiaodangao",
-  "label": "小蛋糕在哪呢（10 秒）",
+  "label": "小蛋糕在哪呢 · 10 秒",
+  "group": "dance",
+  "order": 120,
   "file": "xiaodangao.vmd",
   "note": ""
 }

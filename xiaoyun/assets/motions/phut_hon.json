@@ -1,6 +1,8 @@
 {
   "key": "phut_hon",
-  "label": "Phut hon（5 秒·循环）",
+  "label": "Phut hon · 5 秒",
+  "group": "idle",
+  "order": 0,
   "file": "phut_hon.vmd",
   "note": "loop"
 }

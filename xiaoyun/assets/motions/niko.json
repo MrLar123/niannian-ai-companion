@@ -1,6 +1,8 @@
 {
   "key": "niko",
-  "label": "妮可妮可妮（12 秒·循环）",
+  "label": "妮可妮可妮 · 12 秒",
+  "group": "idle",
+  "order": 15,
   "file": "niko.vmd",
   "note": "loop"
 }

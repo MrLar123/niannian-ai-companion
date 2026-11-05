@@ -25,6 +25,7 @@ import requests
 from flask import Flask, request, jsonify, send_from_directory, Response
 from flask_cors import CORS
 import voice_command_router as vcmd   # 语音指令路由（L1 规则层，纯函数）
+import emotion_rules as EMO           # 情绪判定/强度/韵律（纯函数，可单测）
 
 try:
     sys.stdout.reconfigure(encoding="utf-8")
@@ -338,11 +339,20 @@ VOICE_OPTIONS = [
      "note": "更年轻、更嗲", "rate": VOICE_RATE, "pitch": VOICE_PITCH},
 ]
 
-# ---- 火山方舟 Agent Plan · 豆包语音合成 2.0 音色（2026-10-18）----
+# ---- 火山方舟 Agent Plan · 豆包语音合成 2.0 音色（2026-10-18；2026-11-05 补齐女声）----
 # 这些是**云端真人级**音色，比 edge-tts 的自然度高一档；id 就是控制台音色库里的 speaker。
 # volc_rate = 豆包 speech_rate（0 正常，范围 -50~100）。改这里即可增删菜单项。
+#
+# ★ 2026-11-05：把《方舟四类模型能力清单与接入.md》4.1 节里实测通过的女声全部接进菜单。
+#   同一批 15 个音色里另外 4 个是男声（阳光青年 / 少年子辛 / 儒雅逸辰 / 爽朗少年），
+#   与念念的人设冲突，刻意不放入菜单。
+#   实测口径与文档一致：/api/v3/plan/tts/unidirectional + Plan Key + Resource-Id=seed-tts-2.0，
+#   用后端真实调用同一份参数逐条合成，11 个女声全部拿到音频字节（200 但 0 字节才算不匹配）。
+#   复跑：`python tools/probe_voices.py`（自动取同一把 Plan Key）。
+#   saturn 两档（可爱女生 / 调皮公主）单句合成 1.9~2.1s，比 uranus 慢 0.7~0.9s ——
+#   只影响"第一句开口"的等待、不影响播放，所以照样放进菜单，标签里标出来。
 VOLC_OPTIONS = [
-    {"id": "zh_female_vv_uranus_bigtts", "engine": "volc", "label": "豆包VV · 通用女声",
+    {"id": "zh_female_vv_uranus_bigtts", "engine": "volc", "label": "豆包VV · 甜美女声",
      "locale": "普通话", "note": "自然中性，默认跑通链路用", "volc_rate": 0},
     {"id": "zh_female_gaolengyujie_uranus_bigtts", "engine": "volc",
      "label": "豆包 · 高冷御姐", "locale": "普通话",
@@ -356,6 +366,25 @@ VOLC_OPTIONS = [
     {"id": "zh_female_xiaohe_uranus_bigtts", "engine": "volc",
      "label": "豆包 · 小何", "locale": "普通话",
      "note": "轻快日常，适合闲聊", "volc_rate": 0},
+    # ---- 以下 6 个为 2026-11-05 新增（均为文档 4.1 节实测通过）----
+    {"id": "zh_female_shuangkuaisisi_uranus_bigtts", "engine": "volc",
+     "label": "豆包 · 爽快思思", "locale": "普通话",
+     "note": "利落干脆，怼人时不拖尾音", "volc_rate": 0},
+    {"id": "zh_female_kailangjiejie_uranus_bigtts", "engine": "volc",
+     "label": "豆包 · 开朗姐姐", "locale": "普通话",
+     "note": "明亮外向，情绪高的时候更贴", "volc_rate": 0},
+    {"id": "zh_female_linjianvhai_uranus_bigtts", "engine": "volc",
+     "label": "豆包 · 邻家女孩", "locale": "普通话",
+     "note": "平实亲近，不像在念稿", "volc_rate": 0},
+    {"id": "zh_female_tianmeixiaoyuan_uranus_bigtts", "engine": "volc",
+     "label": "豆包 · 甜美小源", "locale": "普通话",
+     "note": "甜度高、偏少女，撒娇场景好用", "volc_rate": 0},
+    {"id": "saturn_zh_female_keainvsheng_tob", "engine": "volc",
+     "label": "豆包 · 可爱女生（saturn）", "locale": "普通话",
+     "note": "音质另一档，合成慢约 0.8s", "volc_rate": 0},
+    {"id": "saturn_zh_female_tiaopigongzhu_tob", "engine": "volc",
+     "label": "豆包 · 调皮公主（saturn）", "locale": "普通话",
+     "note": "俏皮上扬，音质另一档、慢约 0.8s", "volc_rate": 0},
 ]
 
 
@@ -616,7 +645,7 @@ def _gsv_path(*parts):
 
 
 def _gsv_ref_path(*parts):
-    """参考音频在 D:\LunaAI\tts\voices 下，与权重目录(GPT-SoVITS)分开。"""
+    """参考音频在 D:/LunaAI/tts/voices 下，与权重目录(GPT-SoVITS)分开。"""
     return os.path.join(GSV_VOICE_DIR, *parts)
 
 
@@ -1034,6 +1063,124 @@ def _detect_emotion(text):
     return best[0], (best[1], best[2])
 
 
+# ---------------- 情绪旁路（"他说的话" → 表情 / 韵律） ----------------
+# ★ 与上面那条 _detect_emotion 是两件不同的事，不要合并：
+#   · 上面那条只看**她的台词**，只为了给 edge-tts 挑一档语速，命中率低但无害；
+#   · 下面这条是表演通道，输入必须是**他说的话**——她的台词常常只有 2~4 字
+#     （"哦。""嗯。"），文本里根本没有情绪信号（实测让模型看她台词只有 18% 命中）。
+# 结果经 /api/last 推给前端驱动表情，同时给 TTS 提供语速/音量偏移。
+# ★ 时序：_kick_emotion 在 _brain_turn 第一行起旁路线程，与生成并行。
+#   判定 p90 500~880ms、生成 ~1.2s，所以表情通常比她开口更早到（方案 §9）。
+EMO_STATE = {"label": None, "intensity": 0.0, "src": "none",
+             "req": 0, "ts": 0.0, "ms": 0, "conf": 0.0}
+EMO_SEQ = [0]              # 递增请求号：连说两句时旧判定不许覆盖新判定
+EMO_LOCK = threading.Lock()
+EMO_MODEL = os.environ.get("XIAOYUN_EMO_MODEL") or "doubao-seed-character-260628"
+EMO_ENABLED = (os.environ.get("XIAOYUN_EMO_OFF") or "").lower() not in ("1", "true", "on")
+EMO_TTL = 25.0             # 判定有效期（秒）：过期后 TTS 韵律回落到文本兜底
+EMO_TIMEOUT = 6.0          # 旁路超时；超了就保留规则层结果，绝不让表情缺席
+
+
+def _emo_snapshot():
+    """当前情绪的一致快照（前端 / 日志 / 验收都用这一份口径）。"""
+    st = EMO_STATE
+    return {"label": st["label"], "intensity": round(float(st["intensity"]), 3),
+            "src": st["src"], "req": st["req"], "ms": st["ms"],
+            "age": round(time.time() - st["ts"], 2) if st["ts"] else -1.0}
+
+
+def _emo_set(label, intensity, src, req, ms=0, conf=0.0):
+    """写入情绪状态。只允许"不小于当前请求号"的结果覆盖，防止旧判定串到新一轮。"""
+    with EMO_LOCK:
+        if req < EMO_STATE["req"]:
+            return False
+        EMO_STATE.update({"label": label, "intensity": float(intensity or 0.0),
+                          "src": src, "req": req, "ts": time.time(),
+                          "ms": int(ms), "conf": float(conf or 0.0)})
+    return True
+
+
+def _judge_worker(msg, context, req):
+    """旁路判定线程：调一次模型，只要一个词。任何失败都保留规则层结果。"""
+    t0 = time.time()
+    url = CFG["base"].rstrip("/") + "/chat/completions"
+    payload = {"model": EMO_MODEL, "messages": EMO.judge_messages(msg, context),
+               "temperature": EMO.JUDGE_TEMPERATURE,
+               "max_tokens": EMO.JUDGE_MAX_TOKENS,
+               "stream": False,
+               # ★ 必须显式关思考：带 reasoning 的模型会把 8 个 token 全花在
+               #   reasoning_content 上，content 为空 -> 解析不到标签 -> 全判 none，
+               #   而且 HTTP 200 完全不报错（实测 economy 17 条全塌缩）。
+               "thinking": EMO.JUDGE_THINKING}
+    try:
+        r = requests.post(url, json=payload,
+                          headers={"Authorization": "Bearer sk-local"},
+                          timeout=EMO_TIMEOUT)
+        if r.status_code != 200:
+            evlog("情绪", "判定 HTTP %d，沿用规则层（%r）" % (r.status_code, msg[:24]))
+            return
+        choice = ((r.json().get("choices") or [{}])[0]) or {}
+        content = ((choice.get("message") or {}).get("content") or "").strip()
+        label = EMO.parse_label(content)
+        if not label:
+            # "none" 是有效结论（v3 判据里 none 有明确适用范围），要覆盖规则层；
+            # 而拼错/两个标签/被 max_tokens 截断是**失败**，必须保留规则层结果。
+            raw = content.strip().lower().strip("。.！!？? \n\t")
+            if raw != "none":
+                if choice.get("finish_reason") == "length":
+                    evlog("情绪", "判定被 max_tokens 截断（思维链没关？model=%s）" % EMO_MODEL)
+                else:
+                    evlog("情绪", "判定输出不可解析 %r，沿用规则层" % content[:40])
+                return
+        inten = EMO.intensity_from(msg, label)
+        ms = int((time.time() - t0) * 1000)
+        if _emo_set(label, inten, "llm", req, ms=ms):
+            evlog("情绪", "msg=%r -> %s:%.2f src=llm %dms"
+                  % (msg[:24], label or "none", inten, ms))
+    except Exception as e:                                   # noqa: BLE001
+        evlog("情绪", "判定异常 %r，沿用规则层" % (e,))
+
+
+def _kick_emotion(msg, context=None):
+    """起一轮情绪判定（旁路，不阻塞主链路）。返回本次请求号。
+
+    规则层先落地（<1ms），所以模型超时/挂掉时表情仍有初值——
+    "没有表情"是明确的体验缺陷，"表情略粗"不是。
+    """
+    if not EMO_ENABLED:
+        return 0
+    text = (msg or "").strip()
+    with EMO_LOCK:
+        EMO_SEQ[0] += 1
+        req = EMO_SEQ[0]
+    label, conf = EMO.rule_label(text)
+    _emo_set(label, EMO.intensity_from(text, label),
+             "rule" if label else "none", req, conf=conf)
+    if text:
+        threading.Thread(target=_judge_worker, args=(text, context, req),
+                         daemon=True).start()
+    return req
+
+
+def _emo_prosody(text=None):
+    """给 TTS 的 (speech_rate, loudness_rate) 偏移，两维都实测生效。
+
+    优先用本轮判定（TTL 内），否则按文本规则兜底——固定文案、主动开口、
+    A/B 试听都没有"他的话"，不能因此一片死板。
+    """
+    st = EMO_STATE
+    label, inten = None, 0.5
+    if st["label"] and (time.time() - st["ts"]) <= EMO_TTL:
+        label, inten = st["label"], st["intensity"]
+    elif text:
+        label, _ = EMO.rule_label(text)
+        inten = EMO.intensity_from(text, label)
+    if not label:
+        return 0, 0
+    r, l = EMO.tts_params(label, inten)
+    return r, l
+
+
 # 大脑根地址（去掉 OpenAI 兼容端点结尾的 /v1）。or_proxy 健康检查 = ROOT_URL + "/health"
 ROOT_URL = CFG["base"][:-3] if CFG["base"].rstrip("/").endswith("/v1") else CFG["base"].rstrip("/")
 BRAIN_HEALTH_URL = ROOT_URL + "/health"
@@ -1070,12 +1217,21 @@ def tts_volc(text, speaker=None):
         evlog("后端", "未配置 VOLC_SPEECH_API_KEY，无法使用豆包 2.0 音色")
         return None
     spk = speaker or CFG.get("volc_speaker") or "zh_female_vv_uranus_bigtts"
+    # 情绪韵律：语速 + 音量两维（都实测生效，见方案 §2.8）。
+    # 音量这一维是 shy/sad/tired 唯一能"只靠听"分开的信号——三者表情余弦 >0.85、
+    # 语速也都是"变慢"，只有"慢—轻"的组合不同。
+    _er, _el = _emo_prosody(text)
+    _base_rate = int(CFG.get("volc_speech_rate") or 0)
+    _rate = _clamp_speech_rate(_base_rate + _er)
+    if _er or _el:
+        evlog("TTS", "情绪韵律 speech_rate=%d(%+d) loudness_rate=%+d" % (_rate, _er, _el))
     body = {"user": {"uid": "xiaoyun"},
             "req_params": {"text": text,
                            "speaker": spk,
                            "audio_params": {"format": "mp3",
                                             "sample_rate": 24000,
-                                            "speech_rate": int(CFG.get("volc_speech_rate") or 0)}}}
+                                            "speech_rate": _rate,
+                                            "loudness_rate": _el}}}
     headers = {"Content-Type": "application/json",
                "X-Api-Key": key,
                "X-Api-Resource-Id": VOLC_TTS_RES,
@@ -1275,7 +1431,13 @@ def _pcm_response(text, tag="stream"):
         evlog("TTS流", "sid=%d %s 第%d/%d段(%d字): %s"
               % (sid, tag, i, len(segs), len(s), s[:40]))
 
-    gen = tts_stream.stream_pcm(text, p["key"], p["speaker"], p["rate"],
+    _er, _el = _emo_prosody(text)
+    _rate = _clamp_speech_rate(int(p["rate"]) + _er)
+    if _er or _el:
+        evlog("TTS流", "sid=%d 情绪韵律 speech_rate=%d(%+d) loudness_rate=%+d"
+              % (sid, _rate, _er, _el))
+    gen = tts_stream.stream_pcm(text, p["key"], p["speaker"], _rate,
+                                loudness_rate=_el,
                                 on_event=lambda m: evlog("TTS流", "sid=%d %s" % (sid, m)))
     try:
         first = next(gen)
@@ -1417,16 +1579,21 @@ def _brain_state(state, **kw):
     BRAIN_STATE["since"] = time.time()
 
 
-def brain_chat(messages):
+def brain_chat(messages, temperature=None):
     """调用大脑：OpenAI 兼容 /v1/chat/completions（or_proxy -> OpenRouter 免费模型池）。
     or_proxy 自带多模型自动回退（429/404/超时切下一个候选）；这里失败重试一次。
-    调用生命周期同步进 BRAIN_STATE（页面轮询 /api/brain/state 显示"思考中"）。"""
+    调用生命周期同步进 BRAIN_STATE（页面轮询 /api/brain/state 显示"思考中"）。
+
+    temperature：只给"需要新鲜度"的场景覆盖（如被连戳时的反射式回嘴）。
+      默认 None = 用 CFG["temperature"]。这类短反应最容易复读，
+      调高一点温度比换提示词更能拉开措辞差异。
+    """
     url = CFG["base"].rstrip("/") + "/chat/completions"
     headers = {"Authorization": "Bearer sk-local"}
     payload = {
         "model": CFG["model"],
         "messages": messages,
-        "temperature": CFG["temperature"],
+        "temperature": CFG["temperature"] if temperature is None else temperature,
         "max_tokens": CFG["max_tokens"],
         "stream": False,
     }
@@ -1573,6 +1740,122 @@ def api_memory_clear():
         return jsonify({"ok": False, "error": repr(e)}), 500
 
 
+# ==================== 主动关怀节奏（情境引擎的 idle / min_gap 档位） ====================
+# 「多久主动说一句」到底多合适只有本人说得准，所以做成菜单可选档位：
+# 落盘 data/proactive.json，点完热生效（直接改 CTX 的两个阈值，不用重启后端）。
+# ★ 文件优先于环境变量：菜单点过之后，env 里残留的旧值不该再抢方向盘。
+PROACTIVE_FILE = os.path.join(XIAOYUN_DIR, "data", "proactive.json")
+
+# (key, 菜单标签, idle_seconds, min_gap)
+# 标签里的区间 = idle × randomize(0.6~1.4) 折成分钟 —— 让人一眼知道"多久会冒一句"，
+# 而不是看一堆秒数猜。min_gap 只是下限，正常节奏由 idle 决定。
+PROACTIVE_LEVELS = [
+    ("quiet",  "安静（18~42 分钟一句）", 1800, 900),
+    ("normal", "标准（9~21 分钟一句）", 900, 600),
+    ("lively", "活跃（6~14 分钟一句）", 600, 300),
+    ("clingy", "黏人（3~7 分钟一句）", 300, 120),
+]
+PROACTIVE_DEFAULT = "lively"
+_PROACTIVE_APPLIED = {"sig": None}
+
+
+def _proactive_levels():
+    return {k: {"key": k, "label": lab, "idle": idle, "gap": gap}
+            for k, lab, idle, gap in PROACTIVE_LEVELS}
+
+
+def _proactive_current():
+    """当前档位 (key, idle, gap, label)。
+
+    读 data/proactive.json 的 level；文件缺失/写坏才退回环境变量兜底，再不行用默认档。
+    key 形如 "custom:I:G" 表示 env 给的自定义值 —— 这时菜单里没有任何一项打勾，
+    标题直接显示实际秒数，不会假装选了某个档。
+    """
+    levels = _proactive_levels()
+    key = ""
+    try:
+        with open(PROACTIVE_FILE, encoding="utf-8") as f:
+            key = str((json.load(f) or {}).get("level") or "").strip().lower()
+    except Exception:
+        key = ""
+    if key in levels:
+        lv = levels[key]
+        return key, lv["idle"], lv["gap"], lv["label"]
+    env_idle = os.environ.get("XIAOYUN_IDLE_SECS")
+    env_gap = os.environ.get("XIAOYUN_MIN_GAP")
+    if env_idle or env_gap:
+        try:
+            i_ = int(env_idle) if env_idle else 600
+            g_ = int(env_gap) if env_gap else 300
+            if i_ > 0 and g_ >= 0:
+                return ("custom:%d:%d" % (i_, g_), i_, g_,
+                        "自定义（%d 秒空闲 / %d 秒间隔）" % (i_, g_))
+        except Exception:
+            pass
+    lv = levels[PROACTIVE_DEFAULT]
+    return PROACTIVE_DEFAULT, lv["idle"], lv["gap"], lv["label"]
+
+
+def _apply_proactive(force=False):
+    """把档位应用到正在跑的情境引擎（热生效）。引擎没起来就只返回配置。
+
+    ★ 阈值改了必须重掷 _next_idle：否则会沿用旧档随机出来的阈值，
+      选"黏人"却按"标准"的 21 分钟等，菜单点了像没反应。
+    ★ 重掷之后如果"已空闲时长"已经超过新阈值，下一次 10 秒轮询就会开口——
+      这正是想要的效果（从"标准"切"黏人"应该立刻有感）。
+    """
+    key, idle, gap, label = _proactive_current()
+    sig = (key, idle, gap)
+    if CTX is not None and (force or _PROACTIVE_APPLIED["sig"] != sig):
+        try:
+            changed = (CTX.idle_seconds != idle or CTX.min_gap != gap)
+            CTX.idle_seconds = idle
+            CTX.min_gap = gap
+            CTX._next_idle = CTX._roll_idle()
+            _PROACTIVE_APPLIED["sig"] = sig
+            if changed:
+                evlog("后端", "主动关怀 -> %s（空闲 %ds / 最小间隔 %ds，本次阈值 %ds）"
+                     % (label, idle, gap, CTX._next_idle))
+        except Exception as e:
+            evlog("后端", "应用主动关怀档位失败: %r" % (e,))
+    return {"key": key, "idle": idle, "gap": gap, "label": label}
+
+
+@app.get("/api/proactive")
+def api_proactive_get():
+    """主动关怀节奏：菜单据此渲染档位清单与勾选项。顺手同步一次（手改 json 也生效）。"""
+    cur = _apply_proactive()
+    return jsonify({"ok": True, "current": cur, "levels": list(_proactive_levels().values()),
+                    "default": PROACTIVE_DEFAULT})
+
+
+@app.post("/api/proactive")
+def api_proactive_set():
+    """桌面菜单选档位：落盘 + 立即改运行中的阈值，不用重启。"""
+    body = request.get_json(force=True, silent=True) or {}
+    key = str(body.get("level") or body.get("key") or "").strip().lower()
+    levels = _proactive_levels()
+    if key not in levels:
+        return jsonify({"ok": False,
+                        "error": "level 必须是 %s" % " / ".join(levels)}), 400
+    lv = levels[key]
+    warn = ""
+    try:
+        os.makedirs(os.path.dirname(PROACTIVE_FILE), exist_ok=True)
+        _write_text(PROACTIVE_FILE, json.dumps(
+            {"level": key, "idle": lv["idle"], "gap": lv["gap"],
+             "_说明": "主动关怀节奏：idle=多久没对话算空闲（实际再随机 0.6~1.4 倍），"
+                      "gap=两次主动开口的最小间隔（秒）。菜单选过就以这里为准，"
+                      "手改 level 也生效。"},
+            ensure_ascii=False, indent=2))
+    except Exception as e:
+        warn = "写入失败（本次生效，重启后回到默认）: %r" % (e,)
+    cur = _apply_proactive(force=True)
+    evlog("壳" if request.headers.get("X-Shell") else "页",
+          "主动关怀 -> %s" % lv["label"])
+    return jsonify({"ok": True, "current": cur, "warning": warn})
+
+
 @app.get("/api/context/state")
 def api_context_state():
     """情境引擎状态：用于确认主动搭话是否真的在跑、下次大约何时开口。"""
@@ -1591,6 +1874,7 @@ def api_context_state():
             "since_speak": round(now - CTX.last_speak_ts, 1),
             "config": {"idle_seconds": CTX.idle_seconds, "min_gap": CTX.min_gap,
                        "randomize": CTX.randomize},
+            "proactive": _apply_proactive(),   # 档位（菜单同源）+ 同步一次文件
             "working": bool(PERC is not None and PERC.is_working()),
             "stats": CTX.stats,
         })
@@ -1664,6 +1948,9 @@ def _estimate_speech_seconds(text):
 def _brain_turn(msg):
     """只跑"思考"那一半：拼 messages -> 调大脑 -> 写多轮历史 -> 返回回复文本。
     /api/chat（整段合成）与 /api/chat_stream（流式）共用，保证两条路的上下文行为一致。"""
+    # ★ 情绪旁路：与生成并行跑，不占主链路时间。语音/文字两条路都过这里，
+    #   所以这是唯一需要的挂载点（主动开口另在 _speak_proactively 里挂）。
+    _kick_emotion(msg)
     now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     messages = [
         {"role": "system", "content": CFG["preset"]},
@@ -1773,6 +2060,8 @@ def _publish_reply(reply, use_stream):
 
     audio_uri = None
     mp3 = None
+    # 表情与发声解耦：emo 随 LAST 一起下发，前端靠它驱动表情（不依赖音频就绪）。
+    emo = _emo_snapshot()
     if not use_stream:
         mp3 = tts_mp3(reply)
         if mp3:
@@ -1797,7 +2086,10 @@ def _publish_reply(reply, use_stream):
     PLAYBACK["seq"] = None
     PLAYBACK["ts"] = 0.0
     LAST.update({"seq": SEQ, "reply": reply, "audio": audio_uri,
-                 "voice": CFG["voice"], "stream": use_stream})
+                 "voice": CFG["voice"], "stream": use_stream, "emo": emo})
+    if emo.get("label"):
+        evlog("情绪", "seq=%d 发布 %s:%.2f src=%s %sms"
+              % (SEQ, emo["label"], emo["intensity"], emo["src"], emo.get("ms", 0)))
 
     if CTX is not None:
         try:
@@ -1806,7 +2098,7 @@ def _publish_reply(reply, use_stream):
             pass
     return {"ok": True, "reply": reply, "audio": audio_uri,
             "voice": CFG["voice"], "seq": SEQ, "stream": use_stream,
-            "play_here": False}, mp3
+            "emo": emo, "play_here": False}, mp3
 
 
 # ==================== 语音指令路由（L1 规则层，分层路由 Phase 1） ====================
@@ -1817,6 +2109,118 @@ _CMD_COOLDOWN = {}           # (intent, slot) -> 上次执行时间戳
 CMD_MOTION_COOLDOWN = 10.0   # 同一动作 10s 内不重放（借鉴 VTS 弹幕互动的冷却实践）
 CMD_VOICE_COOLDOWN = 6.0
 CMD_MODEL_COOLDOWN = 15.0    # 换形象要整页重载模型，冷却放宽
+CMD_PRESET_COOLDOWN = 8.0    # 换性格改的是人格文本 + 声线，连着换来换去她会"精神分裂"
+
+# ---- Phase 3：指令偏好 + 反问确认闭环 ----
+# 偏好只用来给"反问报哪些名字"排序，绝不参与"替你决定"的执行判断；写失败也不影响指令。
+CMD_PREFS_PATH = os.path.join(XIAOYUN_DIR, "data", "cmd_prefs.json")
+CLARIFY_TTL = 45.0
+CLARIFY_PENDING = {"labels": [], "kind": "", "at": 0.0}
+_AFFIRM_RE = re.compile(
+    r"^(对|嗯|是|好|没错|是的|就这个|就来?这个|第一个|第二个|第三个|1|2|3|一|二|三)"
+    r"[，,。.!！~～呀啊嘛吧的]*$")
+_KIND_VERB = {"voice": ("换成", "的声音"), "model": ("变成", ""),
+              "motion": ("跳个", ""), "preset": ("换成", "的性格")}
+
+
+def _cmd_pools():
+    """四类槽位清单的唯一取数点：解析、确认回放、反问清单都用它。"""
+    return (VOICE_OPTIONS + GSV_OPTIONS + VOLC_OPTIONS,
+            [(m["key"], m.get("label") or m["key"]) for m in _list_motions()],
+            [(m["key"], m.get("label") or m["key"]) for m in _models()],
+            [(p.get("key"), p.get("label") or p.get("key")) for p in _list_presets()])
+
+
+def _load_cmd_prefs():
+    try:
+        with open(CMD_PREFS_PATH, encoding="utf-8") as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) else {}
+    except Exception:
+        return {}
+
+
+def _bump_cmd_pref(kind, key, label):
+    """成功执行一次就记一笔。偏好错了顶多是推荐顺序不贴心，不能拖垮指令。"""
+    if not kind or not key:
+        return
+    try:
+        d = _load_cmd_prefs()
+        b = d.setdefault(kind, {})
+        rec = b.get(key) or {}
+        rec["count"] = int(rec.get("count", 0)) + 1
+        rec["last"] = time.time()
+        rec["label"] = label or key
+        b[key] = rec
+        os.makedirs(os.path.dirname(CMD_PREFS_PATH), exist_ok=True)
+        tmp = CMD_PREFS_PATH + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(d, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, CMD_PREFS_PATH)
+    except Exception as e:
+        evlog("指令", "偏好写入跳过: %s" % e)
+
+
+def _pref_hint(kind, labels, n=4):
+    """反问清单：常点的排前面，再补清单里没点过的 —— 别报一堆从没用过的名字。"""
+    recs = _load_cmd_prefs().get(kind, {})
+    hot = sorted((v for v in recs.values()
+                  if isinstance(v, dict) and v.get("label")),
+                 key=lambda v: (-int(v.get("count", 0)), -float(v.get("last", 0))))
+    out = []
+    for v in hot:
+        c = vcmd.clean_label(v["label"])
+        if c and c not in out:
+            out.append(c)
+    for lb in labels or []:
+        c = vcmd.clean_label(lb)
+        if c and c not in out:
+            out.append(c)
+        if len(out) >= n:
+            break
+    return out[:n]
+
+
+def _confirm_pending(msg):
+    """反问之后的"对 / 第一个 / 甘雨"：把候选名回放成一条精确指令。
+
+    ★ 不在这里复制任何切换逻辑 —— 合成一句带精确名字的话再交给 _try_voice_command，
+      冷却、写盘、当前态守卫、确认话术全都还是那一份，不会出现两套行为。
+    ★ 回放前先解析一次，只有确实会执行（switch_*/play_motion）才回放；
+      否则用户随口一句"好累啊"会被合成成"变成好累啊"再反问一次，越问越乱。
+    """
+    p = CLARIFY_PENDING
+    if not p["labels"] or time.time() - p["at"] >= CLARIFY_TTL:
+        return None
+    s = (msg or "").strip()
+    kind = p["kind"]
+    w = _AFFIRM_RE.match(s)
+    if w:
+        tok = w.group(1)
+        idx = {"第二个": 1, "2": 1, "二": 1,
+               "第三个": 2, "3": 2, "三": 2}.get(tok, 0)
+        name = p["labels"][idx] if idx < len(p["labels"]) else ""
+    elif (1 < len(s) <= 8
+          and not re.search(r"吗|呢|什么|怎么|？|\?", s)
+          # 带着换/切/跳动词 = 这是一条新指令，不是补说名字："变成甘雨吧"
+          # 不能被合成成"变成变成甘雨吧"，pending 直接作废让它走正常解析。
+          and not vcmd._CHANGE_VERB.search(s)
+          and not re.search(r"跳|来|做|演|想看|停下|休息", s)):
+        name = s          # 没说"对"，直接把名字重报了一遍（"甘雨"）
+    else:
+        name = ""
+    p.update(labels=[], kind="", at=0.0)
+    if not name:
+        return None
+    verb, noun = _KIND_VERB.get(kind, ("换成", ""))
+    syn = "%s%s%s" % (verb, vcmd.clean_label(name), noun)
+    V, M, D, P = _cmd_pools()
+    probe = vcmd.parse_command(syn, V, M, models=D, presets=P)
+    if not probe or probe["intent"] not in (
+            "switch_voice", "switch_model", "switch_preset", "play_motion"):
+        return None
+    evlog("指令", "反问确认回放 -> %s" % syn)
+    return _try_voice_command(syn)
 
 
 def _set_motion_key(key):
@@ -1831,6 +2235,7 @@ def _cmd_say(msg, reply):
     PLAYBACK 时序铁律不许有第二条发布路径，否则就是自问自答死循环的裂缝），
     并把指令轮写进多轮历史（她下一轮听到"再换一个"才有上下文）。
     指令轮不触发记忆抽取——"换个音色"不是值得长期记住的事实。"""
+    _kick_emotion(msg)     # 指令轮不经过 _brain_turn，表情在这里补挂（同样只看他的话）
     pet_present = PET_VISIBLE and (time.time() - PET_ALIVE_TS) < PET_ALIVE_WINDOW
     payload, mp3 = _publish_reply(reply, bool(pet_present and _stream_available()))
     payload["play_here"] = (not pet_present)
@@ -1846,25 +2251,60 @@ def _cmd_say(msg, reply):
     return payload, mp3
 
 
+def _clarify_reply(kind, pool, amb=None, guess=False, total=0):
+    """反问统一话术 + 挂一个 45s 的确认待办（用户说「对 / 第一个 / 名字」即可接上）。
+
+    ★ 清单绝不写死：音色会增删（2026-11-05 就加了 6 个女声），写死的话术过两周
+      就开始推荐一个已经不存在的名字。一律取真实注册表，并按偏好把常用的排前面。
+    ★ guess=True = 这几个是"我猜的"（ASR 听岔了），措辞要和"确实有两个同名"分开。
+    """
+    raw = [x for x in (amb or []) if x]
+    labels = [vcmd.clean_label(x) for x in raw]
+    CLARIFY_PENDING.update(labels=raw, kind=kind,
+                           at=time.time() if raw else 0.0)
+    if labels and guess:
+        if len(labels) == 1:
+            return "刚没听清～你说的是「%s」吗？说声「对」就行。" % labels[0]
+        return "没太听清，是「%s」还是「%s」？说第几个也行～" % (
+            labels[0], labels[1])
+    if labels:
+        return "你说的这个我这儿有 %d 个：%s，要哪个？说第几个也行～" % (
+            len(labels), "、".join(labels))
+    hint = "、".join(_pref_hint(kind, pool))
+    if kind == "model":
+        return ("想看我变成谁？一共 %d 套，常换的有 %s……"
+                "报编号或说名字都行。" % (total or len(pool), hint))
+    return {
+        "voice": "想让我换成什么声音？常听的有 %s……说名字就行，或者说「换成御姐的声音」。" % hint,
+        "motion": "想看哪个呀？常跳的有 %s……说名字就行。" % hint,
+        "preset": "想要哪种性格？常用的有 %s……说一个就行。" % hint,
+    }.get(kind, "想换成哪个？%s……说名字就行。" % hint)
+
+
 def _try_voice_command(msg):
     """分层路由第一层：命中语音指令则执行并让小芸开口确认。
     返回 (payload, mp3)；未命中返回 None（调用方照常走对话大脑）。
     槽位歧义/缺失时不瞎切——她反问一句，由用户补说。"""
-    cmd = vcmd.parse_command(msg, VOICE_OPTIONS + GSV_OPTIONS + VOLC_OPTIONS,
-                             [(m["key"], m.get("label") or m["key"])
-                              for m in _list_motions()],
-                             models=[(m["key"], m.get("label") or m["key"])
-                                     for m in _models()])
+    # 上一轮刚反问过：这一轮可能是"对 / 第一个 / 直接重报名字"，先接上再谈解析
+    confirmed = _confirm_pending(msg)
+    if confirmed is not None:
+        return confirmed
+    V, M, D, P = _cmd_pools()
+    cmd = vcmd.parse_command(msg, V, M, models=D, presets=P)
     if cmd is None:
         return None
     intent = cmd["intent"]
+    POOLS = {"voice": [o.get("label") or "" for o in V],
+             "motion": [x[1] for x in M], "model": [x[1] for x in D],
+             "preset": [x[1] for x in P]}
 
     # 冷却：防 VAD 抖动/连说把同一动作反复触发（反问类不需要）
     slot = (cmd.get("voice_id") or cmd.get("motion_key")
-            or cmd.get("model_key") or "")
+            or cmd.get("model_key") or cmd.get("preset_key") or "")
     cool = {"play_motion": CMD_MOTION_COOLDOWN, "stop_motion": CMD_MOTION_COOLDOWN,
             "switch_voice": CMD_VOICE_COOLDOWN,
-            "switch_model": CMD_MODEL_COOLDOWN}.get(intent, 0.0)
+            "switch_model": CMD_MODEL_COOLDOWN,
+            "switch_preset": CMD_PRESET_COOLDOWN}.get(intent, 0.0)
     if cool and time.time() - _CMD_COOLDOWN.get((intent, slot), 0.0) < cool:
         evlog("指令", "冷却中(%s %s)，只回应不执行" % (intent, slot))
         return _cmd_say(msg, "这个刚刚已经弄过啦，先这样挺好。")
@@ -1879,32 +2319,51 @@ def _try_voice_command(msg):
             threading.Thread(target=gsv_wait_ready, daemon=True).start()
         extra = "这个声音在本地合成，第一次要等我准备个半分钟。" \
             if (o.get("engine") == "gptsovits") else ""
+        _bump_cmd_pref("voice", cmd["voice_id"], o.get("label"))
         reply = "换好啦，现在是「%s」。%s这样说还喜欢吗？" % (o.get("label"), extra)
     elif intent == "play_motion":
-        _set_motion_key(cmd["motion_key"])
+        # ★ 语音 = 跳一遍就停（one-shot），不覆盖菜单的持久选择：
+        #   用户说"跳个舞"是"现在给我跳一段"，不是"从此把你的待机换成这支舞"。
+        #   菜单/托盘点选仍然是持久切换（写 current.txt），两条语义各归各位。
+        _set_oneshot(cmd["motion_key"])
+        _bump_cmd_pref("motion", cmd["motion_key"], cmd["motion_label"])
         reply = "看好了——「%s」！" % cmd["motion_label"]
     elif intent == "stop_motion":
         _set_motion_key(MOTION_IDLE)
+        _clear_oneshot()     # 一次性动作还没播完就喊停：一起清掉，别让它在下一轮又起来
         reply = "好啦，回来休息。"
     elif intent == "ask_motion":
-        names = "、".join(clean for clean in
-                          [vcmd.clean_label(m.get("label") or m["key"])
-                           for m in _list_motions()[:6]] if clean)
-        reply = "想看哪个呀？我这有：%s……说名字就行。" % names
+        reply = _clarify_reply("motion", POOLS["motion"], cmd.get("ambiguous"),
+                               cmd.get("guess"))
     elif intent == "ask_voice":
-        labels = cmd.get("ambiguous") or ["高冷御姐", "活泼少女", "东北口音", "台湾柔嗓"]
-        reply = "想让我变成什么声音？比如%s，你点一个。" % "、".join(labels)
+        reply = _clarify_reply("voice", POOLS["voice"], cmd.get("ambiguous"),
+                               cmd.get("guess"))
     elif intent == "switch_model":
         if cmd["model_key"] == _current_model_key():
             # 就是要现在这个形象：不写状态，页面就不会白白重载一次模型
             return _cmd_say(msg, "我现在就是「%s」呀，还想看谁？" % cmd["model_label"])
         _set_model_key(cmd["model_key"])
+        _bump_cmd_pref("model", cmd["model_key"], cmd["model_label"])
         reply = "好~我去变成「%s」，几秒钟，等我换装哦。" % cmd["model_label"]
+    elif intent == "switch_preset":
+        if cmd["preset_key"] == (CFG.get("preset_key") or ""):
+            # 已经是这套性格：不重复加载（每次切换会把语速/声线重算一遍）
+            return _cmd_say(msg, "我现在就是「%s」呀，想换哪种？" % cmd["preset_label"])
+        if not _apply_preset(cmd["preset_key"]):
+            return None
+        _bump_cmd_pref("preset", cmd["preset_key"],
+                       CFG.get("preset_label") or cmd["preset_label"])
+        reply = "好，那我换成「%s」说话。" % (CFG.get("preset_label") or cmd["preset_label"])
+    elif intent == "ask_preset":
+        reply = _clarify_reply("preset", POOLS["preset"], cmd.get("ambiguous"),
+                               cmd.get("guess"))
     elif intent == "ask_model":
-        lst = _models()
-        items = "、".join("%d%s" % (i + 1, vcmd.clean_label(m.get("label") or m["key"]))
-                          for i, m in enumerate(lst[:8]))
-        reply = "想看我变成谁？%s……报编号或说名字都行。" % items
+        reply = _clarify_reply("model", POOLS["model"], cmd.get("ambiguous"),
+                               cmd.get("guess"), total=len(D))
+    elif intent == "ask_clarify":
+        # ASR 把名字听岔了，三张表都没对上：只报最像的候选让她确认，绝不猜着执行
+        reply = _clarify_reply(cmd["kind"], POOLS.get(cmd["kind"], []),
+                               cmd.get("ambiguous"), True)
     else:
         return None
     evlog("指令", "%s 命中(%s) -> %s" % (intent, cmd.get("matched") or slot, reply[:40]))
@@ -1938,8 +2397,89 @@ def do_chat(msg):
 # 与 do_chat 的关键差异：这里**不经过** _brain_turn，所以不会往 HISTORY 里写
 # 用户消息（她主动说的话，用户并没有说），也不会触发记忆抽取 —— 否则会把
 # 她自己随口的话当成"用户的信息"记下来，污染记忆库。
-def _speak_proactively(intent, trigger):
-    """按情境引擎给的意图现生成一句话，并走同一条发布链路。"""
+# ---- 主动开口的去重工具 ------------------------------------------------
+# 为什么需要：反射式短句（被戳、被打扰）最容易复读。lite 档故意跳过 HISTORY，
+# 模型根本"看不见"自己刚说过什么，而意图模板每次一样 —— 结果就是"别戳了"
+# 可以连着来四遍。粗判相似度就够了：宁可放过一句近义句，也别把正常反应误杀。
+_PUNCT_RE = re.compile(r"[\s，。！？、,.!?~～…—\-—_\"'“”‘’「」『』（）()《》·]")
+
+
+def _norm_reply(s):
+    return _PUNCT_RE.sub("", (s or "")).lower()
+
+
+def _too_similar(a, b):
+    """归一化后完全相同/包含关系/编辑相似度高 —— 都算"换汤不换药"。"""
+    x, y = _norm_reply(a), _norm_reply(b)
+    if not x or not y:
+        return False
+    if x == y or x in y or y in x:
+        return True
+    return difflib.SequenceMatcher(None, x, y).ratio() >= 0.72
+
+
+def _any_too_similar(text, avoid):
+    return any(_too_similar(text, a) for a in (avoid or []))
+
+
+# ---- 跨触发源的"最近说过"池 --------------------------------------------------
+# 为什么放在后端而不是各调用方：主动开口有 4 个入口（情境 greeting/idle、
+# 屏幕报错/成功、视觉观察、连戳），各维护一份 recent 必然互相撞车——
+# 情境刚说完"快睡吧"，十秒后屏幕感知又来一句"快睡吧"，用户听到的就是复读。
+# 现在所有入口共用这一份；并且在**生成前**就把最近几句当"负面清单"写进提示词，
+# 一次生成就避开（比生成完撞车再重试快 1~2 秒，重试只当兜底保留）。
+_PROACTIVE_SAID = []
+_PROACTIVE_SAID_MAX = 8
+
+
+def _scene_now(max_age=240):
+    """此刻主人在干什么的**实时**快照（给主动开口贴场景用）。
+
+    与 _activity_context() 的分工：那个读事件库、还带两小时聚合，偏"回顾"；
+    这个直接取屏幕感知的最新一条，偏"现在"。感知没起、或最后一条太旧
+    （锁屏、切走、感知停了）就返回 ""，让调用方跳过注入——
+    宁可不说，也别拿半小时前的画面当时事评论。
+    """
+    if PERC is None:
+        return ""
+    try:
+        evt = (PERC.state() or {}).get("event") or {}
+    except Exception:
+        return ""
+    try:
+        ts = float(evt.get("ts") or 0)
+    except Exception:
+        ts = 0.0
+    if not ts or (time.time() - ts) > max_age:
+        return ""
+    act = str(evt.get("activity") or "").strip()
+    detail = str(evt.get("detail") or "").strip()
+    app = str(evt.get("app") or "").strip()
+    if not act and not detail:
+        return ""
+    bits = []
+    if act:
+        bits.append(act)
+    if detail and detail != act:
+        bits.append(detail[:60])
+    if app and not detail:
+        bits.append("应用 %s" % app)
+    return "，".join(bits)
+
+
+def _speak_proactively(intent, trigger, lite=False, temperature=None, avoid=None):
+    """按情境引擎给的意图现生成一句话，并走同一条发布链路。
+
+    lite=True：反射级插话（如被连戳）用。跳过情境/记忆/活动/历史的堆叠，
+      只带人设 + 语感 + 意图 —— 提示词短得多，出话快 1~2 秒，
+      而且这种"被打扰"的反应本来就不该扯到主人在干什么。
+    temperature：透传给 brain_chat，需要新鲜度的短反应可以调高。
+    avoid：最近说过的几句。生成结果若与之"换汤不换药"，就地重生成一次
+      （带更强的换角度指令）。只重试一次，宁可稍微多等一秒也不重复，
+      但绝不能因为重复而哑火。
+
+    返回：成功 = 这次说出口的文本（真值）；放弃 = False。
+    """
     # 双重确认：到真正开口这一刻再查一次状态。判定在后台线程里，到她生成完
     # 可能已经过去几秒，期间她可能已经开始说话/开始收音了。
     if VOICE.get("busy") or VOICE.get("speaking"):
@@ -1949,6 +2489,10 @@ def _speak_proactively(intent, trigger):
         evlog("后端", "放弃主动开口：宠物窗不在线（trigger=%s）" % trigger)
         return False
 
+    # 情绪旁路：主动开口没有"他的话"，用情境意图当判定输入（方案 §5 改动 5）。
+    # 意图是"她此刻想干什么"（如"关心他加班"），判出来的情绪正好是她的状态。
+    _kick_emotion(intent)
+
     messages = [
         {"role": "system", "content": CFG["preset"]},
         {"role": "system", "content": "current time is:" + datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")},
@@ -1956,25 +2500,48 @@ def _speak_proactively(intent, trigger):
     cpb = _catchphrase_block()      # 主动开口也要带着这套人格的语感
     if cpb:
         messages.append({"role": "system", "content": cpb})
-    if CTX is not None:
-        try:
-            messages.append({"role": "system", "content": CTX.prompt_block()})
-        except Exception:
-            pass
-    if BRAIN_MEM is not None:
-        try:
-            mem_ctx = BRAIN_MEM.get_context("")
-            if mem_ctx:
-                messages.append({"role": "system", "content": mem_ctx})
-        except Exception:
-            pass
-    act = _activity_context()      # 主动开口也知道主人在干嘛，才不尬
-    if act:
-        messages.append({"role": "system", "content": act})
+    if not lite:
+        if CTX is not None:
+            try:
+                messages.append({"role": "system", "content": CTX.prompt_block()})
+            except Exception:
+                pass
+        if BRAIN_MEM is not None:
+            try:
+                mem_ctx = BRAIN_MEM.get_context("")
+                if mem_ctx:
+                    messages.append({"role": "system", "content": mem_ctx})
+            except Exception:
+                pass
+        act = _activity_context()      # 主动开口也知道主人在干嘛，才不尬
+        if act:
+            messages.append({"role": "system", "content": act})
+        # 实时画面优先于上面的历史汇总：没有它，模型只能靠"久未交互"猜场景，
+        # 猜出来的就是"你回来啦…还在看视频呀"这种放之四海皆准的空话。
+        scene = _scene_now()
+        if scene:
+            messages.append({"role": "system",
+                             "content": "【此刻的实时画面】主人正在：" + scene +
+                                        "。这句要贴着他此刻做的事说，讲具体的东西（在弄什么、"
+                                        "卡在哪、进行到哪一步），不要泛泛寒暄。"})
     # 主动开口也别换称呼：记忆里有就用记忆里的那个
     messages.append({"role": "system", "content": NICKNAME_HINT})
-    if HISTORY:
-        messages.extend(HISTORY[-6:])
+    if HISTORY and not lite:
+        # 压掉相邻重复的她的话：复读链会自我强化——上下文里连着三条一模一样的
+        # assistant 消息，模型会顺着继续重复，哪怕负面清单明令禁止。
+        compact = []
+        for _m in HISTORY[-6:]:
+            if compact and _m.get("content") == compact[-1].get("content"):
+                continue
+            compact.append(_m)
+        messages.extend(compact)
+    # 负面清单：把最近主动说过的几句直接摊给模型。比"生成完撞车再重试"省 1~2 秒，
+    # 而且能挡住"同一句话换个语序"的重试检测抓不到的近义句。
+    if _PROACTIVE_SAID:
+        messages.append({"role": "system", "content":
+                         "你最近主动说过的几句（这次必须换角度、换句式、换开头，"
+                         "不要换汤不换药）：" +
+                         "；".join("「%s」" % s for s in _PROACTIVE_SAID[-4:])})
     # 意图单独放一条 system，并明确"这就是你要做的事"，避免模型把它当成用户说的话
     messages.append({"role": "system",
                      "content": "现在轮到**你主动开口**了（用户还没有说话）：" + intent +
@@ -1982,19 +2549,55 @@ def _speak_proactively(intent, trigger):
     # 舞台指令禁令：主动开口同样会被念出来，约束放在意图之后（离生成最近）
     messages.append({"role": "system", "content": STAGE_HINT})
 
+    def _gen(extra_hint=None):
+        """真正生成。extra_hint 插在 STAGE_HINT 之前（舞台禁令永远是最后一条）。"""
+        msgs = list(messages)
+        if extra_hint:
+            msgs.insert(len(msgs) - 1, {"role": "system", "content": extra_hint})
+        return (brain_chat(msgs, temperature=temperature) or "")
+
     try:
-        reply = brain_chat(messages)
+        reply = _gen()
     except Exception as e:
         evlog("后端", "主动开口生成失败: %r" % (e,))
         return False
 
     reply = _strip_stage_text(reply)   # 主动开口同样要剥舞台指令（见函数注释）
-
     reply = (reply or "").strip()
+
+    # 去重基准 = 全局池（所有主动开口入口）+ 调用方自带的（连戳有自己的 recent）
+    avoid_all = list(_PROACTIVE_SAID)
+    if avoid:
+        avoid_all.extend(avoid)
+
+    # ---- 复读拦截：和最近说过的几乎一样就换角度重说一次 ----
+    # 只重试一次：多等一秒能换来不重复，但连续重试会让点击反馈变迟钝。
+    if reply and avoid_all and _any_too_similar(reply, avoid_all):
+        evlog("后端", "主动开口复读拦截：%s（换角度重说）" % reply)
+        try:
+            retry = _strip_stage_text(_gen(
+                "★ 你上一句是「%s」，跟之前说过的几乎一样。这一句必须彻底换角度、"
+                "换句式和开头：不要用「别」「不要」「住手」「停下」这一类开头，"
+                "也不要只是把同一句话换个字。只说她开口要说的话。" % reply) or "")
+        except Exception as e:
+            evlog("后端", "换角度重生成失败（沿用原句）: %r" % (e,))
+            retry = ""
+        retry = (retry or "").strip()
+        if retry and len(retry) <= 120 and not _any_too_similar(retry, avoid_all):
+            reply = retry
+        else:
+            evlog("后端", "换角度后仍相似，沿用原句（不哑火）")
+
     if not reply or len(reply) > 120:
         # 空回复或长篇大论都不该出口：前者是白跑一趟，后者会变成念课文
         evlog("后端", "放弃主动开口：回复为空或过长（%d 字）" % len(reply))
         return False
+
+    # 记进全局去重池：下一个入口（可能是 10 秒后的屏幕感知）生成前就会看到它。
+    # 同一句只记一次——重复入池只会占掉负面清单的名额，让"换角度"变成"换角度说同一句"。
+    if not _any_too_similar(reply, _PROACTIVE_SAID):
+        _PROACTIVE_SAID.append(reply)
+        del _PROACTIVE_SAID[:-_PROACTIVE_SAID_MAX]
 
     # 她的话也进历史，只是只记 assistant 那一半，下一轮上下文才连贯
     HISTORY.append({"role": "assistant", "content": reply})
@@ -2005,7 +2608,7 @@ def _speak_proactively(intent, trigger):
     use_stream = bool(_stream_available())
     _publish_reply(reply, use_stream)
     evlog("后端", "主动开口(%s)：%s" % (trigger, reply))
-    return True
+    return reply          # 返回文本（真值）—— 调用方要用它做下次的去重参考
 
 
 @app.get("/settings")
@@ -2115,7 +2718,9 @@ def api_last():
     except Exception:
         since = 0
     if since == SEQ:
-        return jsonify({"seq": SEQ, "fresh": False})
+        # ★ 没有新台词也要带 emo：旁路判定（rule -> llm）常常比台词晚到几百毫秒，
+        #   页面已经在轮询了，靠这一条把表情"升级"推过去，否则只能等下一轮。
+        return jsonify({"seq": SEQ, "fresh": False, "emo": _emo_snapshot()})
     # 播放权：同一 seq 只有一个页面能拿到音频，其余页面只出气泡不出声。
     # ★ 流式轮次（audio=None + stream=True）同样要抢占：否则两个宠物页会同时
     #   去拉 /api/tts_stream，合成两遍、两个声音叠着播。
@@ -2135,7 +2740,8 @@ def api_last():
     LAST_FETCH["seq"] = SEQ
     LAST_FETCH["ts"] = time.time()
     return jsonify({"seq": SEQ, "fresh": True, "reply": LAST["reply"],
-                    "audio": audio, "voice": LAST["voice"], "stream": stream})
+                    "audio": audio, "voice": LAST["voice"], "stream": stream,
+                    "emo": LAST.get("emo") or _emo_snapshot()})
 
 
 @app.post("/api/pet_state")
@@ -2293,16 +2899,23 @@ GAZE = {"ts": 0.0, "x": None, "y": None, "rect": None, "mode": _load_gaze_mode()
 #       读到 poke.seq 变化 -> 播一次反应（受惊表情 + 身体后缩），不弹聊天窗。
 # 为什么复用 /api/gaze 而不是单开一条轮询：页面本来就在轮询它，
 #   多带两个字段零成本、零额外请求；150ms 的延迟对点击反馈是够用的（人感知阈值 ~100ms）。
-# click_mode 两档（右键菜单可切，持久化到 data/click_mode.txt）：
-#   poke = 单击戳一下，双击才开聊天窗（默认，避免"点一下就被窗口糊脸"）
-#   chat = 老行为，单击直接开聊天窗
+# click 只有一个语义了（2026-11-03 用户要求：点她身上永远不弹对话框）：
+#   poke = 单击/连点都只戳一下（页面播反应，声音走下面的连戳反馈）
+#   历史上还有 chat = 单击直接开聊天窗，已移除；data/click_mode.txt 里残留的
+#   "chat" 会在读取时回落成 poke，不必手动清。
+#   ★ 聊天窗入口只剩菜单栏（右键菜单 / 托盘菜单）与 Ctrl+Alt+X 热键。
 # x / y = 点击位置在宠物窗内的归一化坐标（0~1，壳算好后带上来）。
 #   ★ 部位判定放页面做，不在这里做：页面有相机和骨骼，能拿射线打到真实网格上，
 #     比后端按窗口高度猜"这是头还是身体"准得多（不同模型头身比不一样）。
 #     所以后端只当搬运工，原样回传给页面。
-POKE = {"seq": 0, "ts": 0.0, "x": None, "y": None}
+POKE = {"seq": 0, "ts": 0.0, "x": None, "y": None,
+        "hist": [],           # 最近的点击时间戳（连戳判定用，只留最后 12 个）
+        "last_spoke": 0.0,    # 上次因连戳开口的时间（冷却用）
+        "speaking": False,    # 连戳的抱怨正在生成/合成中（防重复触发）
+        "recent": [],         # 最近说过的戳反应台词 [(ts, text)]，去重用，最多 8 条
+        "last_angle": ""}     # 上次用的反应角度，避免连着两次同一个方向
 
-CLICK_MODES = ("poke", "chat")
+CLICK_MODES = ("poke",)     # 只剩这一档：点击不弹窗
 CLICK_MODE_FILE = os.path.join(XIAOYUN_DIR, "data", "click_mode.txt")
 
 # 点击手感的力度档（右键菜单可切，持久化到 data/poke_style.txt）：
@@ -2406,6 +3019,179 @@ def api_gaze_config_set():
     return jsonify({"ok": True, "mode": mode, "label": labels[mode], "warning": warn})
 
 
+# ---- 连戳的语音反馈：连戳第 2 下就应声 -------------------------------------
+# 分工：页面只管"身体反应"（挤压 + 受惊/嫌弃表情），声音一律由后端走
+#   _speak_proactively -> _publish_reply 这条唯一发声出口。
+#   ★ 不能让页面自己播：那是第二条发声路径，SEQ / LAST_REPLY_GUARD / PLAYBACK
+#     三件套会被绕过，正是"自问自答死循环"的成因（项目铁律）。
+#
+# ★ 参数为什么这么定（2026-11-03 按实测点击节奏重调）：
+#   实测用户连戳时的真实间隔是 1~2 秒（23:42 那一串 20 下：1s/2s/1s/1s…），
+#   原先 gap=0.9 太严，只有极少数相邻两下能判成"同一串"，所以"点了好多下
+#   只有一次反应"。现在：
+#     count=2  第二下就应声（点两下必响，这是灵敏度的主要来源）
+#     gap=2.5  1~2 秒的正常连点节奏都算同一串
+#     cooldown=4  响过之后 4 秒可再响（原来是 30 秒，等于响一次就哑半分钟）
+#   三者可在 data/poke_speak.json 热调，不用改代码、不用重启（5 秒缓存）。
+POKE_SPEAK_FILE = os.path.join(XIAOYUN_DIR, "data", "poke_speak.json")
+POKE_SPEAK_DEFAULT = {"count": 2, "gap": 2.5, "cooldown": 4.0}
+_POKE_SPEAK_CACHE = {"ts": 0.0, "cfg": dict(POKE_SPEAK_DEFAULT)}
+
+
+def _poke_speak_cfg():
+    """读 data/poke_speak.json（5 秒缓存）。文件缺失就按默认值建一份出来。
+
+    做成文件而不是写死常量：这类手感参数用户/我随时要调，
+    每次都改代码重启后端不现实（重启要人工双击 bat）。
+    """
+    now = time.time()
+    if now - _POKE_SPEAK_CACHE["ts"] < 5.0:
+        return _POKE_SPEAK_CACHE["cfg"]
+    cfg = dict(POKE_SPEAK_DEFAULT)
+    try:
+        with open(POKE_SPEAK_FILE, encoding="utf-8") as f:
+            j = json.load(f)
+        v = j.get("count")
+        if isinstance(v, (int, float)) and not isinstance(v, bool) and v >= 1:
+            cfg["count"] = int(v)
+        for k in ("gap", "cooldown"):
+            v = j.get(k)
+            if isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0:
+                cfg[k] = float(v)
+    except FileNotFoundError:
+        _write_text(POKE_SPEAK_FILE, json.dumps(POKE_SPEAK_DEFAULT,
+                                                ensure_ascii=False, indent=2))
+    except Exception:
+        pass                                  # 文件写坏了就用默认值，反馈不能哑
+    _POKE_SPEAK_CACHE.update({"ts": now, "cfg": cfg})
+    return cfg
+
+
+# ---- 连戳反应的角度池 ------------------------------------------------
+# 给的是「往哪个方向反应」，不是台词 —— 沿用 _catchphrase_block 的思路：
+# 固定台词轮播听三次就腻，而"角度"是无穷的，句子每次都是新的。
+# 旧版只有「制止他」一个方向，模型于是稳定输出"别戳了"（实测连说四遍），
+# 现在按情绪档位各给 5 个方向随机抽，并避开上一次用过的那个。
+POKE_ANGLES = {
+    "mild": [
+        "冷淡地点出他手很闲，不正面回应被戳这件事",
+        "用一句反问把话推回给他（不是问『为什么戳我』，是反问他很没事做吗）",
+        "装作没被打扰：手上该干什么干什么，只丢半句嫌弃",
+        "给一个轻描淡写的警告，说清楚再点一次会有什么后果",
+        "傲娇一下：嘴上嫌他烦，又让他察觉你其实在注意他",
+    ],
+    "annoyed": [
+        "开始计较次数：把这几下数出来，跟他算这笔账",
+        "威胁但不真发火：说一个具体、甚至有点可爱的报复方式",
+        "讨价还价：要他住手就得给点好处或答应一件事",
+        "冷冷点评他幼稚，表达『我对你有点失望』",
+        "下一个小通牒，语气压着但不吼",
+    ],
+    "angry": [
+        "真的被惹到：短促、有分量的狠话（不许骂脏话）",
+        "威胁要报复或罢工不理他，把后果说得很具体",
+        "最后通牒：再点一下就怎样，说完不再解释",
+        "反将一军：让他自己去试试被连着戳的感觉",
+        "冷到极点的一句短语，加一句不解释的收尾",
+    ],
+}
+
+POKE_TONES = {
+    "mild": "语气冷淡、简短，像被轻碰了一下。",
+    "annoyed": "语气不耐烦，开始计较，但别真发火。",
+    "angry": "语气明显被惹到，话要短、有分量，但不骂脏话、不歇斯底里。",
+}
+
+# 句式/长度也随机：同一件事用不同句式说出来，听感差异比换词大得多。
+POKE_SHAPES = [
+    "这次用一个反问句开头。",
+    "这次用陈述句，不要用问句。",
+    "这次用感叹句，短促收尾。",
+    "这次先给结论，再补半句理由。",
+    "这次只丢一个具体的后果，不解释原因。",
+    "这次先一句冷话，再补一句嫌弃。",
+]
+
+POKE_LENGTHS = [
+    "这次控制在 12 个字以内，越短越好。",
+    "这次一到两句，总共不超过 30 个字。",
+]
+
+
+def _poke_speak_intent(streak):
+    """按连戳次数递进语气 + 每轮换一个反应角度，专治"复读"。
+
+    三道防线（层层兜底，缺一不可）：
+      1. 角度随机 + 避开上次：从源头就不走同一条思路；
+      2. 句式/长度随机：同一角度也能说出不同形状；
+      3. 明确的负面清单 + 最近台词：告诉模型"哪几句他已经听腻了"。
+    最后 _speak_proactively 还有一次生成后相似度拦截（见 avoid 参数）。
+    """
+    if streak <= 2:
+        tier = "mild"
+    elif streak <= 4:
+        tier = "annoyed"
+    else:
+        tier = "angry"
+
+    pool = POKE_ANGLES[tier]
+    last = POKE.get("last_angle") or ""
+    angle = random.choice([a for a in pool if a != last] or pool)
+    POKE["last_angle"] = angle
+
+    # 最近说过的话：只取 6 小时内的最后 3 句，太多了反而稀释指令
+    now = time.time()
+    rec = [t for (ts, t) in POKE.get("recent", []) if now - ts < 6 * 3600][-3:]
+    ban = ""
+    if rec:
+        ban = ("你已经对他说过这些：" + "、".join("「%s」" % t for t in rec) +
+               "。这次绝对不许重复、也不许换个字重说；"
+               "「别戳了」「不要戳」「住手」「停下」这一路的话他已经听腻了，一句都不许再出现。")
+
+    # 句式与角度不能打架：角度已经是"反问"时，就不要再抽"用陈述句/不要用问句"
+    shapes = POKE_SHAPES
+    if "反问" in angle or "问句" in angle:
+        shapes = [s for s in POKE_SHAPES if "陈述句" not in s and "不要用问句" not in s]
+
+    bits = [
+        "主人刚才在戳你（这一串已经第 %d 下）。" % streak,
+        POKE_TONES[tier],
+        "这次的反应角度：%s。" % angle,
+        random.choice(shapes or POKE_SHAPES),
+        random.choice(POKE_LENGTHS),
+    ]
+    if ban:
+        bits.append(ban)
+    bits.append("不要问他为什么戳你，也不要解释你在做什么。")
+    return " ".join(bits)
+
+
+def _poke_speak_worker(streak):
+    """连戳触发的一句抱怨。放后台线程：生成 + 合成要几秒，不能卡住 /api/poke
+    （壳那侧是同步 POST，卡住会让点击反馈整体变钝）。
+
+    avoid：把最近 3 句已说过的台词交给 _speak_proactively，生成结果若撞车
+      会被拦下来换角度重说一次（见那边的复读拦截）。
+    temperature 提到 0.95：短反应最容易收敛到同一句，需要更大的发散度。
+    """
+    try:
+        now = time.time()
+        avoid = [t for (ts, t) in POKE.get("recent", []) if now - ts < 6 * 3600][-3:]
+        said = _speak_proactively(_poke_speak_intent(streak), "poke", lite=True,
+                                  temperature=0.95, avoid=avoid)
+        if said:
+            POKE["last_spoke"] = time.time()
+            POKE["recent"].append((POKE["last_spoke"], said))
+            del POKE["recent"][:-8]      # 只留最近 8 句，避免长期运行涨内存
+        else:
+            # 她正在说话 / 宠物窗不在线：不消耗冷却，下次连戳还能再触发
+            evlog("后端", "连戳反馈放弃：她现在不方便开口")
+    except Exception as e:
+        evlog("后端", "连戳反馈失败: %r" % (e,))
+    finally:
+        POKE["speaking"] = False
+
+
 @app.post("/api/poke")
 def api_poke_post():
     """壳上报"戳了她一下"。自增 seq，并顺带记下点在哪儿 —— 页面靠这两样播反应。
@@ -2413,12 +3199,15 @@ def api_poke_post():
     x / y 是宠物窗内的归一化坐标（0~1）。缺省或非法时置 None，页面退回"当身体处理"，
     绝不会因为拿不到坐标就不播反应（点击反馈是旁路，宁可粗糙也不能哑火）。
 
-    ★ 故意不在这里做限流/去重：每次真实的点击都应该有反馈，
+    ★ 视觉反应故意不在这里做限流/去重：每次真实的点击都应该有反馈，
       连点的观感（受惊 -> 嫌弃）由页面按时间间隔决定，后端不猜。
+    ★ 声音是例外：只有"连戳"（cfg["count"] 下、间隔 < cfg["gap"]）
+      才让她开口，且带 cfg["cooldown"] 冷却 —— 参数在 data/poke_speak.json，见上。
     """
     body = request.get_json(force=True, silent=True) or {}
+    now = time.time()
     POKE["seq"] += 1
-    POKE["ts"] = time.time()
+    POKE["ts"] = now
     x, y = body.get("x"), body.get("y")
     if isinstance(x, (int, float)) and isinstance(y, (int, float)) \
             and not isinstance(x, bool) and not isinstance(y, bool):
@@ -2426,6 +3215,25 @@ def api_poke_post():
         POKE["y"] = round(max(0.0, min(1.0, float(y))), 4)
     else:
         POKE["x"] = POKE["y"] = None
+
+    # ---- 连戳判定（只在这里动 POKE["hist"]，后台线程不碰它）----
+    cfg = _poke_speak_cfg()
+    hist = POKE["hist"]
+    hist.append(now)
+    del hist[:-12]                   # 只留最近 12 下，避免长期运行涨内存
+    if not POKE["speaking"] and (now - POKE["last_spoke"]) >= cfg["cooldown"]:
+        streak = 1                   # 从最后一下往回数，间隔断链就停
+        for i in range(len(hist) - 1, 0, -1):
+            if hist[i] - hist[i - 1] <= cfg["gap"]:
+                streak += 1
+            else:
+                break
+        if streak >= cfg["count"]:
+            POKE["speaking"] = True
+            evlog("后端", "连戳 %d 下 -> 开口抱怨（后台生成中）" % streak)
+            threading.Thread(target=_poke_speak_worker, args=(streak,),
+                             daemon=True).start()
+
     return jsonify({"ok": True, "seq": POKE["seq"], "x": POKE["x"], "y": POKE["y"]})
 
 
@@ -2455,7 +3263,7 @@ def api_click_config_set():
                         "error": "style 必须是 %s" % " / ".join(POKE_STYLES)}), 400
 
     warns = []
-    labels = {"poke": "戳一下（双击开聊天窗）", "chat": "直接打开聊天窗"}
+    labels = {"poke": "戳一下（不弹对话框）"}
     style_labels = {"soft": "克制", "vivid": "明显"}
     ev = []
     if mode:
@@ -2489,13 +3297,35 @@ MODEL_EXTRA_DIRS = [os.path.join(XIAOYUN_DIR, "assets", "peier")]   # 不在 mod
 # 老模型的显示名与观感参数（没有 model.json 时兜底；新模型直接读 model.json）
 # order 只影响菜单排序：小在前。新模型 10、老模型 30，新装的总是排在前面。
 BUILTIN_MODEL_META = {
-    "peier":     {"label": "姵儿（模之屋官方）", "params": {}, "order": 30},
-    "ganyu":     {"label": "甘雨（原神）", "params": {}, "order": 30},
-    "huangquan": {"label": "黄泉（星穹铁道）", "params": {}, "order": 30},
-    "raiden":    {"label": "雷电将军（原神）", "params": {}, "order": 30},
-    "kafka":     {"label": "卡芙卡（星穹铁道）", "params": {}, "order": 30},
-    "qianxi":    {"label": "千咲（鸣潮 1.03）", "params": {}, "order": 30},
+    "peier":     {"label": "姵儿", "params": {}, "order": 30},
+    "ganyu":     {"label": "甘雨", "params": {}, "order": 30},
+    "huangquan": {"label": "黄泉", "params": {}, "order": 30},
+    "raiden":    {"label": "雷电将军", "params": {}, "order": 30},
+    "kafka":     {"label": "卡芙卡", "params": {}, "order": 30},
+    "qianxi":    {"label": "千咲", "params": {}, "order": 30},
 }
+
+def _num_first(*vals, **kw):
+    """取第一个真正是数字的值（0 也算）。`x or y` 会把 0 当没写，菜单第 0 项因此错位。"""
+    for v in vals:
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            return v
+    return kw.get("default", 100)
+
+
+# 菜单分组（人物）：右键菜单与托盘菜单共用这一份顺序与标题。
+# 为什么按"服装类型"分组：31 个形象平铺在一个子菜单里要滚动半天，而挑形象时
+# 脑子里想的是"今天穿什么"，不是"这是哪个游戏的角色"。
+MODEL_GROUPS = [
+    ("daily",   "日常"),
+    ("swim",    "泳装"),
+    ("dress",   "礼服 · 旗袍 · 居家"),
+    ("special", "特殊形态"),
+]
+MOTION_GROUPS = [
+    ("idle",  "待机 · 小动作"),
+    ("dance", "舞蹈"),
+]
 # 这些 pmx 是武器/道具/占位文件，不能当人物主体
 PMX_SKIP_WORDS = ("武器", "刀", "枪", "子弹", "弓", "剑", "weapon", "blank", "空白", "凑数", "球")
 
@@ -2505,7 +3335,10 @@ PMX_SKIP_WORDS = ("武器", "刀", "枪", "子弹", "弓", "剑", "weapon", "bla
 # 不参与菜单，免得列表里塞满一次性模型。
 # 要放新模型进菜单：把去扩展名的文件名加到这里即可（也可以建 assets/<名字>.json
 # 写 {"in_menu": true} 单独放行）。
-VRM_MENU_KEYS = {"小芸", "小芸-jk"}
+VRM_MENU_KEYS = set()
+# 2026-11-05：原来 {"小芸", "小芸-jk"} 两个 VRM 是形似而非真形象的占位模型，
+# 用户确认「是假的」→ 文件移到 _archive/下线的假VRM模型/，白名单清空。
+# 以后要重新上市某个 VRM，在它旁边放 <key>.json 写 {"in_menu": true} 即可，不用改这里。
 # 扫描时跳过的纯资源目录（只放贴图，不会有 pmx），避免每次遍历上千个文件
 RES_SKIP_DIRS = {"tex", "texture", "textures", "sph", "spa", "toon", "贴图", "材质", "皮肤"}
 _MODEL_CACHE = {"ts": 0.0, "list": [], "sig": None}
@@ -2619,8 +3452,9 @@ def _discover_models(force=False):
                 "pmx": rel.replace("\\", "/"),
                 "vrm": "",
                 "kind": "pmx",
+                "group": meta.get("group") or base.get("group") or "daily",
                 "params": meta.get("params") or base.get("params") or {},
-                "order": meta.get("order") or base.get("order") or 100,
+                "order": _num_first(meta.get("order"), base.get("order"), default=100),
             })
     # 散落在 assets/ 下的老目录（如 assets/peier/）
     for d in MODEL_EXTRA_DIRS:
@@ -2645,8 +3479,9 @@ def _discover_models(force=False):
             "pmx": os.path.relpath(fp, os.path.join(XIAOYUN_DIR, "assets")).replace("\\", "/"),
             "vrm": "",
             "kind": "pmx",
+            "group": meta.get("group") or base.get("group") or "daily",
             "params": meta.get("params") or base.get("params") or {},
-            "order": meta.get("order") or base.get("order") or 30,
+            "order": _num_first(meta.get("order"), base.get("order"), default=30),
         })
 
     # ---- VRM：assets/*.vrm 单文件 ----
@@ -2683,8 +3518,9 @@ def _discover_models(force=False):
                 "pmx": "",
                 "vrm": fn,
                 "kind": "vrm",
+                "group": meta.get("group") or base.get("group") or "daily",
                 "params": meta.get("params") or base.get("params") or {},
-                "order": meta.get("order") or base.get("order") or 20,
+                "order": _num_first(meta.get("order"), base.get("order"), default=20),
             })
 
     out.sort(key=lambda m: (m.get("order", 100), m["label"]))
@@ -2728,8 +3564,13 @@ def api_models():
         "ok": True,
         "current": cur,
         "auto": True,          # 清单由目录扫描得出，新放进去的模型无需改代码
+        # 分组顺序与标题由后端给，桌面壳只照着排版 —— 免得两边各写一份、改一处漏一处
+        "groups": [{"key": k, "label": v,
+                    "count": sum(1 for m in lst if (m.get("group") or "daily") == k)}
+                   for k, v in MODEL_GROUPS],
         "models": [{"key": m["key"], "label": m["label"], "pmx": m["pmx"],
                     "vrm": m.get("vrm") or "", "kind": m.get("kind") or "pmx",
+                    "group": m.get("group") or "daily",
                     "params": m.get("params") or {}} for m in lst],
     })
 
@@ -2870,11 +3711,49 @@ def api_grade_set():
 
 # ==================== 动作（VMD 舞蹈 / 待机） ====================
 # assets/motions/ 下每个 .vmd 就是一个动作。可选的同名 .json 提供显示名：
-#   {"label":"灰姑娘（140 秒）","note":"loop"}
+#   {"label":"灰姑娘 · 2 分 20 秒","group":"dance"}
 # 当前选择记在 assets/motions/current.txt，值为动作 key；"idle" = 内置待机微动作。
+#
+# ★ one-shot 语义（调研报告 Phase 2）：说话让她跳一段，应该是"跳完就停"，不是
+#   "从此一直站那儿跳"。但持久切换（菜单点了就一直跳）是有用的语义，两者不能互相
+#   取代。所以状态分两半：
+#     · current.txt  —— 持久选择（菜单/托盘用，重启后仍然生效）
+#     · ONESHOT      —— 语音触发的"播一遍就回待机"，只活到动作结束，不写盘
+#   页面轮询 /api/motions 拿到的 `oneshot` 字段就是后者；播完页面回调
+#   POST /api/motion_done 清掉它，下一轮轮询自动回 idle。
 MOTION_DIR = os.path.join(XIAOYUN_DIR, "assets", "motions")
 MOTION_STATE = os.path.join(MOTION_DIR, "current.txt")
 MOTION_IDLE = "idle"
+ONESHOT = {"key": "", "seq": 0, "at": 0.0}   # 语音触发的一次性动作
+ONESHOT_TTL = 600.0    # 兜底：页面没回报完成（崩了/被关）时别永远卡在 oneshot
+
+
+def _set_oneshot(key):
+    """标记"这次只播一遍"，并递增 seq。
+
+    ★ 为什么要 seq：同一个动作连说两次（"再跳一次"）时 key 没变，页面若只比 key
+      就会认为"已经在播了"而不重播。seq 递增让页面知道"这是一次新的播放请求"。
+    """
+    ONESHOT["key"] = key or ""
+    ONESHOT["seq"] += 1
+    ONESHOT["at"] = time.time()
+    return ONESHOT["seq"]
+
+
+def _clear_oneshot():
+    ONESHOT["key"] = ""
+    return ONESHOT["seq"] if ONESHOT["seq"] else 0
+
+
+def _oneshot_active():
+    """当前有没有待播的 one-shot；过期（页面没回报）自动作废。"""
+    if not ONESHOT["key"]:
+        return ""
+    if time.time() - ONESHOT["at"] > ONESHOT_TTL:
+        evlog("动作", "one-shot 超时作废: %s（页面未回报完成）" % ONESHOT["key"])
+        ONESHOT["key"] = ""
+        return ""
+    return ONESHOT["key"]
 
 
 def _list_motions():
@@ -2900,7 +3779,10 @@ def _list_motions():
             "file": fn,
             "url": "/assets/motions/" + fn,
             "note": meta.get("note") or "",
+            "group": meta.get("group") or "dance",
+            "order": _num_first(meta.get("order"), default=900),
         })
+    out.sort(key=lambda m: (m["order"], m["label"]))
     return out
 
 
@@ -2917,15 +3799,39 @@ def _current_motion_key():
 
 @app.get("/api/motions")
 def api_motions():
-    """动作清单 + 当前选择（托盘/右键菜单、宠物页轮询都用它）。"""
+    """动作清单 + 当前选择（托盘/右键菜单、宠物页轮询都用它）。
+
+    `oneshot` 非空 = 这一轮该播一次然后回待机（语音"跳个舞"用）。
+    页面把它当"本次播放请求"处理：key 变化或 seq 变化都重播，播完调 /api/motion_done。
+    """
     lst = _list_motions()
-    cur = _current_motion_key()
+    os_key = _oneshot_active()
     return jsonify({
         "ok": True,
-        "current": cur,
-        "idle_label": "内置待机（呼吸/歪头/挥手）",
+        "current": _current_motion_key(),
+        "oneshot": os_key,
+        "oneshot_seq": ONESHOT["seq"],
+        "idle_label": "内置待机（呼吸 / 歪头 / 挥手）",
+        "groups": [{"key": k, "label": v} for k, v in MOTION_GROUPS],
         "motions": lst,
     })
+
+
+@app.post("/api/motion_done")
+def api_motion_done():
+    """页面播完一次性动作后回报。body 可带 key 做校验（防止旧请求把新请求清掉）。"""
+    body = request.get_json(force=True, silent=True) or {}
+    key = str(body.get("key") or "")
+    if key and ONESHOT["key"] and key != ONESHOT["key"]:
+        return jsonify({"ok": True, "stale": True, "oneshot": ONESHOT["key"]})
+    done = ONESHOT["key"]
+    _clear_oneshot()
+    if done:
+        # ★ 播完就把这支舞的冷却清掉：冷却的本意是"别连发同一动作"（防 VAD 抖动），
+        #   而"跳完了再跳一次"是明确的第二次请求，拦住它反而像坏了。
+        _CMD_COOLDOWN.pop(("play_motion", done), None)
+        evlog("页", "一次性动作播完 -> 回待机（%s）" % done)
+    return jsonify({"ok": True, "done": done})
 
 
 SHOT_FLAG_PATH = os.path.join(XIAOYUN_DIR, "_shot_flag.json")
@@ -3944,11 +4850,11 @@ def favicon():
 
 def _preload():
     """后端起来后只探活大脑，不再做显存预热。
-    or_proxy 由启动脚本（Start-Xiaoyun.ps1）或桌面「启动OpenRouter代理.bat」拉起。"""
+    or_proxy 由启动脚本（Start-Xiaoyun.ps1）或桌面「启动OpenRouter代理-后台.bat」拉起。"""
     ok, detail = brain_warmup()
     print("[brain] 启动探活:", ok, detail, "->", BRAIN_HEALTH_URL)
     if not ok:
-        print("[brain] 未在线！请双击桌面「启动OpenRouter代理.bat」，或等待启动脚本拉起。")
+        print("[brain] 未在线！请双击桌面「启动OpenRouter代理-后台.bat」，或等待启动脚本拉起。")
 
 
 def _warm_embeddings(store, client=None):
@@ -4020,16 +4926,23 @@ def _init_memory_and_context():
             MEM = BRAIN_MEM = None
     if CONTEXT_ENABLED and ContextEngine is not None and CTX is None:
         try:
+            # 节奏统一走档位（data/proactive.json，菜单可改）；env 只在文件缺失时兜底，
+            # 见 _proactive_current 的说明。
+            _p_key, _p_idle, _p_gap, _p_label = _proactive_current()
             CTX = ContextEngine(
                 _speak_proactively, log=_evlog,
-                idle_seconds=int(os.environ.get("XIAOYUN_IDLE_SECS", "900")),
+                idle_seconds=_p_idle,
                 randomize=True,
-                min_gap=int(os.environ.get("XIAOYUN_MIN_GAP", "600")),
-                greeting_after=int(os.environ.get("XIAOYUN_GREET_AFTER", "180")))
+                min_gap=_p_gap,
+                # ★ 问候门槛 180 -> 1800（2026-11-04）：180 秒没说话就被当成"回来了"，
+                #   而人只是安静地在看直播/写代码。真正的"久别重逢"至少半小时。
+                greeting_after=int(os.environ.get("XIAOYUN_GREET_AFTER", "1800")))
             CTX.start(is_busy=lambda: bool(VOICE.get("busy") or VOICE.get("speaking")),
                       is_listening=lambda: _asr_listening(),
                       is_working=lambda: bool(PERC is not None and PERC.is_working()))
-            evlog("后端", "情境引擎已启用（空闲 %ds / 最小间隔 600s）" % CTX.idle_seconds)
+            _PROACTIVE_APPLIED["sig"] = (_p_key, _p_idle, _p_gap)
+            evlog("后端", "情境引擎已启用（%s：空闲 %ds / 最小间隔 %ds）"
+                 % (_p_label, _p_idle, _p_gap))
         except Exception as e:
             evlog("后端", "情境引擎初始化失败，已降级为无主动搭话: %r" % (e,))
             CTX = None

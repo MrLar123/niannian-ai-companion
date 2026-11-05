@@ -101,6 +101,8 @@ xiaoyun/data/events.jsonl
 # 偏好文件保留结构示例不上传实际值
 xiaoyun/data/gaze_mode.txt
 xiaoyun/data/poke_style.txt
+# 2026-11-05：指令偏好 / 戳一下台词 / 主动搭话状态都含用户真实行为数据
+xiaoyun/data/*.json
 
 # ---------- 用户配置（人设当前选择/音色覆盖）----------
 xiaoyun/人设/current.txt
@@ -117,11 +119,14 @@ xiaoyun/assets/motions/current.txt
 config.local.json
 config.local.yaml
 secrets*
-# ★ or_proxy.py 内置兜底 Key（_ARK_FALLBACK_KEY）——上传前必须改为
-#   os.environ.get('ARK_STANDARD_API_KEY', '') 并在 README 说明配 Key 步骤，
-#   然后删除下面这行。agentplan.py 只读环境变量，可安全上传。
-or_proxy/or_proxy.py
+# 2026-11-05：or_proxy.py 内三把硬编码 Key 已迁到用户级环境变量，源码只保留
+#   os.environ.get(..., "")，核心代理因此可以安全上传（原先的排除规则已删除）。
+#   新机器需配：ARK_API_KEY / VOLC_SPEECH_API_KEY / OPENROUTER_API_KEY /
+#   MODELSCOPE_API_KEY；标准通道与 Plan Key 撞车时另配 ARK_STANDARD_API_KEY。
 # agentplan.py 本身无 Key（只读环境变量），可上传
+
+# ---------- 本地验收材料（31 张 PNG / 29MB，不进仓库）----------
+xiaoyun/docs/验收截图/
 
 # ---------- 素材包（465M FBX / 524M zip，版权素材）----------
 xiaoyun/_archive/素材/

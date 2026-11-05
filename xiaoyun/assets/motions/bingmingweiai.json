@@ -1,6 +1,8 @@
 {
   "key": "bingmingweiai",
-  "label": "病名为爱 REMAKE（78 秒）",
+  "label": "病名为爱 · 78 秒",
+  "group": "dance",
+  "order": 160,
   "file": "bingmingweiai.vmd",
   "note": ""
 }

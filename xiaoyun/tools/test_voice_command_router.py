@@ -19,36 +19,53 @@ VOICE_OPTIONS = [
     {"id": "edge-tw", "label": "晓臻 · 台湾柔嗓"},
 ]
 MOTIONS = [
-    ("idle", "内置待机"),
-    ("aini", "爱你（49 秒）"),
-    ("xiaodangao", "小蛋糕在哪呢（10 秒）"),
-    ("tankouwu", "弹跳扣扣舞（8 秒）"),
-    ("phut_hon", "Phut hon（5 秒·循环）"),
-    ("phut_hon_long", "Phut hon 长版（24 秒）"),
-    ("yeyeye", "yeyeye（23 秒）"),
-    ("yao", "摇（9 秒）"),
-    ("nya_fingers", "手指律动（82 秒·仅手部）"),
+    ("idle", "内置待机（呼吸 / 歪头 / 挥手）"),
+    ("aini", "爱你 · 49 秒"),
+    ("xiaodangao", "小蛋糕在哪呢 · 10 秒"),
+    ("tankouwu", "弹跳扣扣舞 · 8 秒"),
+    ("phut_hon", "Phut hon · 5 秒"),
+    ("phut_hon_long", "Phut hon 慢版 · 24 秒"),
+    ("yeyeye", "yeyeye · 23 秒"),
+    ("yao", "摇 · 9 秒"),
+    ("nya_fingers", "手指律动（只动手）· 82 秒"),
+]
+# 改名后的真实人设清单（label 里带「· 一句话定位」，与线上一致）
+PRESETS = [
+    ("aojiao", "傲娇 · 口是心非"),
+    ("dushe", "毒舌 · 说全是大实话"),
+    ("fuhei", "腹黑 · 我记着就好"),
+    ("gaoleng-youhuo", "高冷诱惑御姐 × 经典女友感"),
+    ("nvwang", "女王 · 再说一遍你做不到"),
+    ("sanwu", "三无 · 嗯，知道了"),
+    ("tiaopi", "调皮 · 不给～"),
+    ("wenrou", "温柔 · 先接住情绪"),
+    ("xiaoemo", "小恶魔 · 看你表现"),
+    ("yisheng", "医生 · 十一点了，手机放下"),
+    ("yonglan", "慵懒 · 再躺五分钟"),
+    ("yuanqi", "元气 · 试试看嘛"),
 ]
 MODELS = [
-    ("huangquan", "黄泉（星穹铁道）"),
-    ("kafka", "卡芙卡（星穹铁道）"),
-    ("kafka_yoga", "卡芙卡（瑜伽裤）"),
-    ("ganyu", "甘雨（原神）"),
-    ("feixue", "绯雪（一形态）"),
-    ("feixue2", "绯雪（二阶段）"),
-    ("peier", "peier"),
-    ("rover", "女漂泊者（鸣潮）"),
-    ("luotianyi", "洛天依（旗袍）"),
-    ("raiden", "雷电将军（原神）"),
-    ("elysia", "爱莉希雅（泳装）"),
-    ("qianxi", "千咲（鸣潮 1.03）"),
-    ("xiaoyu", "涂山小玉（睡裙）"),
+    ("huangquan", "黄泉"),
+    ("kafka", "卡芙卡"),
+    ("kafka_yoga", "卡芙卡 · 瑜伽裤"),
+    ("kafka_vest", "卡芙卡 · 泳装"),
+    ("ganyu", "甘雨"),
+    ("feixue", "绯雪 · 一形态"),
+    ("feixue2", "绯雪 · 二形态"),
+    ("peier", "姵儿"),
+    ("rover", "女漂泊者"),
+    ("luotianyi", "洛天依 · 旗袍"),
+    ("raiden", "雷电将军"),
+    ("raiden_mdjsn", "雷电将军 · 素体"),
+    ("elysia", "爱莉希雅 · 泳装"),
+    ("qianxi", "千咲"),
+    ("xiaoyu", "涂山小玉 · 睡裙"),
 ]
 
 PASS = FAIL = 0
 def check(name, text, want_intent, **want):
     global PASS, FAIL
-    got = parse_command(text, VOICE_OPTIONS, MOTIONS, models=MODELS)
+    got = parse_command(text, VOICE_OPTIONS, MOTIONS, models=MODELS, presets=PRESETS)
     ok = (got or {}).get("intent") == want_intent
     if ok and want:
         for k, v in want.items():
@@ -113,18 +130,22 @@ check("去括号短名", "换成甘雨吧", "switch_model", model_key="ganyu")
 check("变成+全名", "变成黄泉（星穹铁道）", "switch_model", model_key="huangquan")
 check("想看+别名佩儿", "我想看看佩儿", "switch_model", model_key="peier")
 check("别名漂泊者", "变成漂泊者", "switch_model", model_key="rover")
-check("同名歧义->反问", "换成卡芙卡", "ask_model",
-      ambiguous=["卡芙卡（星穹铁道）", "卡芙卡（瑜伽裤）"])
-check("同名歧义·绯雪", "换成绯雪", "ask_model")
+# 改名后每个形象都有唯一整名（「卡芙卡」= 基础版，「卡芙卡 · 泳装」= 那套衣服），
+# 所以同名前缀不再产生歧义 —— 整名命中优先，说全名就直接切。
+check("整名直击基础版", "换成卡芙卡", "switch_model", model_key="kafka")
+check("整名直击·带服装", "换成卡芙卡泳装", "switch_model", model_key="kafka_vest")
+check("只说衣服名", "换成瑜伽裤", "switch_model", model_key="kafka_yoga")
+check("前缀不吞后缀", "换成雷电将军素体", "switch_model", model_key="raiden_mdjsn")
+check("前缀本身直击", "换成雷电将军", "switch_model", model_key="raiden")
+check("同名前缀·绯雪", "换成绯雪", "ask_model", ambiguous=["绯雪 · 一形态", "绯雪 · 二形态"])
 check("缺槽位->反问", "换个模型给我看看", "ask_model")
-check("当前形象点名", "变成甘雨（原神）", "switch_model", model_key="ganyu")
 check("负例·聊角色", "你演过什么角色", None)
 check("负例·人物话题", "这个故事里的人物真有意思", None)
 check("音色优先于模型", "用黄泉的声音说话", "ask_voice")
 
 print("== 换模型：ASR 友好别名 + 编号 ==")
 check("误听卡夫卡->歧义", "换成卡夫卡", "ask_model",
-      ambiguous=["卡芙卡（星穹铁道）", "卡芙卡（瑜伽裤）"])
+      ambiguous=["卡芙卡", "卡芙卡 · 瑜伽裤"])
 check("误听飞雪->歧义", "换成飞雪", "ask_model")
 check("瑜伽裤直击", "换成瑜伽裤那套", "switch_model", model_key="kafka_yoga")
 check("二阶段直击", "变成二阶段", "switch_model", model_key="feixue2")
@@ -133,12 +154,47 @@ check("将军别名", "想看将军", "switch_model", model_key="raiden")
 check("爱丽丝误听", "换成爱丽丝", "switch_model", model_key="elysia")
 check("千岁误听", "变成千岁", "switch_model", model_key="qianxi")
 check("小玉别名", "换成小玉", "switch_model", model_key="xiaoyu")
-check("阿拉伯编号", "变成4号", "switch_model", model_key="ganyu")
-check("中文编号", "变成十二号", "switch_model", model_key="qianxi")
-check("编号十", "变成十号", "switch_model", model_key="raiden")
+check("阿拉伯编号", "变成4号", "switch_model", model_key="kafka_vest")
+check("中文编号", "变成十二号", "switch_model", model_key="raiden_mdjsn")
+check("编号十", "变成十号", "switch_model", model_key="luotianyi")
 check("编号越界回落", "变成三十号", None)
 check("本名爱莉希雅仍可", "换成爱莉希雅", "switch_model", model_key="elysia")
 check("负例·将军棋局", "我不用将军这招", None)
+
+print("== 换性格（人设）==")
+check("名词锚点+性格词", "换个傲娇的性格", "switch_preset", preset_key="aojiao")
+check("只说性格词", "换成傲娇", "switch_preset", preset_key="aojiao")
+check("人设说法", "把人设切成毒舌", "switch_preset", preset_key="dushe")
+check("脾气说法", "脾气调成女王那种", "switch_preset", preset_key="nvwang")
+check("展示名直击", "换成小天使", "switch_preset", preset_key="xiaotianshi")
+check("ASR误听粘人", "换成粘人的性格", "switch_preset", preset_key="nianren")
+check("温柔必须带锚点", "换成温柔的性格", "switch_preset", preset_key="wenrou")
+check("缺槽位->反问", "换个性格呗", "ask_preset")
+check("缺槽位·人设说法", "换个新人设", "ask_preset")
+check("负例·问她性格", "你什么性格呀", None)
+check("负例·聊脾气", "我最近脾气不太好", None)
+check("负例·温柔无锚点仍是音色", "换个温柔的声音", "switch_voice",
+      voice_id="edge-xiaoxiao")
+check("负例·御姐仍是音色", "换个御姐的声音", "switch_voice",
+      voice_id="volc-yujie")
+check("负例·长句闲聊", "你今天的性格怎么跟平时完全不一样啊，是不是发生什么事了", None)
+
+print("== ASR 听岔：只报候选反问，绝不猜着执行（Phase 2 补齐） ==")
+# 两字名在**执行层**禁用近似（"换成甘雨"曾被听成音色"晓雨"），
+# 但不能因此让用户说完一动不动还以为切了 —— 近似只用来反问。
+check("两字名听岔->报候选", "换成甘兩", "ask_clarify", kind="model",
+      guess=True, ambiguous=["甘雨"])
+check("变成两字名听岔", "变成甘兩", "ask_clarify", kind="model",
+      guess=True, ambiguous=["甘雨"])
+check("近音两字名也只反问", "换成小雨", "ask_clarify", kind="model", guess=True)
+check("性格听岔->报候选", "换成傲骄的性格", "ask_preset", guess=True,
+      ambiguous=["傲娇 · 口是心非"])
+check("三字名听岔仍不猜着切", "换成卡芙咔", "ask_model", guess=True)
+check("歧义候选最多三个", "换成绯雪", "ask_model", guess=False,
+      ambiguous=["绯雪 · 一形态", "绯雪 · 二形态"])
+check("不像名字的话不打扰", "换成现金", None)
+check("问句不反问", "你会变成谁呀", None)
+check("心情闲聊不误伤", "我今天心情很差", None)
 
 print("\n结果: %d 通过, %d 失败" % (PASS, FAIL))
 sys.exit(1 if FAIL else 0)

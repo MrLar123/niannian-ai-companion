@@ -1,6 +1,8 @@
 {
   "key": "yeyeye",
-  "label": "yeyeye（23 秒）",
+  "label": "yeyeye · 23 秒",
+  "group": "dance",
+  "order": 135,
   "file": "yeyeye.vmd",
   "note": ""
 }

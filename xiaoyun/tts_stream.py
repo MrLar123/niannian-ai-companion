@@ -282,12 +282,15 @@ class VolcPcm(object):
     """豆包语音合成 2.0 的裸 PCM 通道。单线程使用（生成器不可重入）。"""
 
     def __init__(self, key, speaker, speech_rate=0, sample_rate=SAMPLE_RATE,
-                 url=None, resource=None):
+                 url=None, resource=None, loudness_rate=0):
         if not key:
             raise VolcError("未配置 VOLC_SPEECH_API_KEY")
         self.key = key
         self.speaker = speaker
         self.speech_rate = int(speech_rate or 0)
+        # 音量维度（实测生效，-50~100）：表情余弦分不开 shy/sad/tired，
+        # 但"不怎么慢但明显小声"/"慢而闷"/"又慢又轻"在听感上是三回事。
+        self.loudness_rate = int(loudness_rate or 0)
         self.sample_rate = int(sample_rate)
         self.url = url or VOLC_URL
         self.resource = resource or VOLC_RESOURCE
@@ -303,6 +306,7 @@ class VolcPcm(object):
                     "format": "pcm",
                     "sample_rate": self.sample_rate,
                     "speech_rate": self.speech_rate,
+                    "loudness_rate": self.loudness_rate,
                 },
             },
         }
@@ -353,17 +357,20 @@ def _emit(on_event, msg):
 
 
 def stream_pcm(text, key, speaker, speech_rate=0, sample_rate=SAMPLE_RATE,
-               max_len=60, min_len=8, on_event=None):
+               max_len=60, min_len=8, on_event=None, loudness_rate=0):
     """切段 -> 逐段请求 -> 边收边吐。
 
     第一个 yield 就是"可以开口了"的时刻（实测 0.35s 量级）。
     段间串行、不并发：并行确实能缩短总时长，但会让音色/语调抖动；而豆包 RTF≈0.35，
     句级播放永远追不上合成，并发省下的时间对听感没有意义。
+
+    loudness_rate：音量偏移（-50~100），情绪链路用；0 = 原样。
     """
     segs = segment_text(text, max_len=max_len, min_len=min_len)
     if not segs:
         return
-    cli = VolcPcm(key, speaker, speech_rate, sample_rate)
+    cli = VolcPcm(key, speaker, speech_rate, sample_rate,
+                  loudness_rate=loudness_rate)
     t_all = time.time()
     produced = 0
     _emit(on_event, "切段 %d 段: %s" % (len(segs), " | ".join(
@@ -373,6 +380,12 @@ def stream_pcm(text, key, speaker, speech_rate=0, sample_rate=SAMPLE_RATE,
         t0 = time.time()
         ttfb = None
         n = 0
+        # 逐句韵律：末句语速再收 3 个点——"一句话说完情绪就散了"是最像机器的细节。
+        # 单段（"哦。"）不碰，否则等于把唯一的情绪也削掉。
+        if len(segs) > 1 and idx == len(segs) - 1:
+            cli.speech_rate = max(-50, speech_rate - 3)
+        else:
+            cli.speech_rate = speech_rate
         try:
             for chunk in cli.synth(seg):
                 if ttfb is None:

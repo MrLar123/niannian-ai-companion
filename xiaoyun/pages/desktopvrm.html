@@ -143,8 +143,10 @@ function hasShell(){
 /* ===================== 观感参数（模型定档：小芸 VRM1.0 T-pose） ===================== */
 const _q = new URLSearchParams(location.search);
 /* 形象不再写死：启动时从 /api/models 取当前选择（右键菜单/托盘切换后轮询跟随）。
-   ?model= 用于单模型预览（可传 key，也可直接传 /assets/xxx.vrm 路径）。 */
-let MODEL_URL = '/assets/小芸.vrm';     // 兜底：后端取不到时用它
+   ?model= 用于单模型预览（可传 key，也可直接传 /assets/xxx.vrm 路径）。
+   ⚠ 小芸.vrm / 小芸-jk.vrm 已于 2026-11-05 下线（占位模型，移入 _archive/），
+   菜单里不再有 VRM 项 —— 这一页现在只作开发/预览用，必须用 ?model= 指定模型。 */
+let MODEL_URL = '/assets/avaturn_nn.vrm';     // 兜底：后端取不到时用它（占位，非正式形象）
 let CUR_MODEL_KEY = '';                 // 后端 current（用于检测切换）
 let LOCK_MODEL = false;                 // ?model= 指定后不再跟随后端切换
 const YAW       = 0;
@@ -1575,6 +1577,11 @@ addEventListener('resize', () => { syncSize(); clearTimeout(rzTimer); rzTimer = 
     polling = true;
     fetch('/api/last?since=' + seq).then(function(r){ return r.json(); })
       .then(function(j){
+        /* 情绪走独立通道：无论 fresh 与否都带 emo（后端 /api/last 两个分支都回），
+           所以表情不依赖台词/音频就绪，也就能"脸比嘴早"。 */
+        if (j && j.emo && window.__xyFace) {
+          window.__xyFace.set(j.emo.label, j.emo.intensity, j.emo.req, j.emo.src);
+        }
         if (j && j.fresh && j.reply){
           seq = j.seq;
           xlog('收到新回复', 'seq=' + j.seq + (j.stream ? ' (流式)' : ''));
@@ -2016,6 +2023,17 @@ addEventListener('resize', () => { syncSize(); clearTimeout(rzTimer); rzTimer = 
     },
 
     _face: function (emo) {
+      /* 降级为 overlay：不再直接写 expressionManager。
+         直接写会在退出时 `_face(0)` 把情绪一起清零（"戳完她突然面无表情"）。
+         这里只登记权重，由 Face.tick 统一合成与平滑回落。 */
+      const F = window.__xyFace;
+      if (F && F.pushExpr) {
+        if (this.annoyed) F.pushExpr({ angry: Math.min(1, emo * 1.15),
+                                       relaxed: Math.min(1, emo * 0.6) });
+        else if (emo > 0.01) F.pushExpr({ surprised: Math.min(1, emo * 1.15) });
+        return;
+      }
+      // 兜底（理论上不会走到）：Face 未加载时保持旧行为
       const em = vrm && vrm.expressionManager;
       if (!em) return;
       try {
@@ -2031,6 +2049,63 @@ addEventListener('resize', () => { syncSize(); clearTimeout(rzTimer); rzTimer = 
 
   /* 诊断入口（无头验证 / 现场排查）：只读 + 一个 gaze 注入，不参与业务逻辑 */
   window.__xyDbg = {
+    /* 表情状态：无头断言用（标签/强度/最终权重/姿态） */
+    face: function () { return Face.state(); },
+    faceSet: function (label, inten) { Face.set(label, inten, null, 'dbg'); Face.holdUntil = Infinity; },
+    ready: function () { return !!(vrm && vrm.humanoid && boneHome); },
+    /* 页内取像素：先强制渲染一帧再读后台缓冲，不需要 preserveDrawingBuffer。
+       走这条路而不是 CDP captureScreenshot —— 后者在 SwiftShader 下会把渲染进程搞崩。
+       返回 n×n 灰度（0~255），只够做"有没有变化/差多少"的对照。 */
+    grab: function (n) {
+      n = n || 96;
+      if (!vrm) return null;
+      renderer.render(scene, camera);
+      const gl = renderer.getContext();
+      const w = gl.drawingBufferWidth, h = gl.drawingBufferHeight;
+      const buf = new Uint8Array(w * h * 4);
+      gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, buf);
+      const out = new Array(n * n);
+      for (let y = 0; y < n; y++) {
+        for (let x = 0; x < n; x++) {
+          const sx = Math.floor(x * w / n), sy = Math.floor((n - 1 - y) * h / n);
+          const i = (sy * w + sx) * 4;
+          out[y * n + x] = (buf[i] * 0.3 + buf[i + 1] * 0.59 + buf[i + 2] * 0.11) | 0;
+        }
+      }
+      return out;
+    },
+    /* 彩色截图（人工目视验收用）：renderer 建的时候带了
+       preserveDrawingBuffer，直接 toDataURL 就能拿到画面，不用 readPixels 中转。
+       返回 data:image/png;base64,...（透明背景原样保留，拼图时再垫底色）。 */
+    shot: function () {
+      if (!vrm) return null;
+      renderer.render(scene, camera);
+      return renderer.domElement.toDataURL('image/png');
+    },
+    /* 头骨在画面里的像素坐标：出特写图时用来定位裁剪框 */
+    headScreen: function () {
+      const H = vrm && vrm.humanoid;
+      if (!H) return null;
+      const b = H.getRawBoneNode ? H.getRawBoneNode('head') : H.getNormalizedBoneNode('head');
+      if (!b) return null;
+      const v = new THREE.Vector3();
+      b.getWorldPosition(v);
+      v.project(camera);
+      const gl = renderer.getContext();
+      const w = gl.drawingBufferWidth, h = gl.drawingBufferHeight;
+      return { x: +((v.x * 0.5 + 0.5) * w).toFixed(1),
+               y: +((-v.y * 0.5 + 0.5) * h).toFixed(1), w: w, h: h };
+    },
+    headRot: function () {
+      const H = vrm && vrm.humanoid;
+      if (!H) return null;
+      const g = (nm) => (H.getRawBoneNode ? H.getRawBoneNode(nm) : H.getNormalizedBoneNode(nm));
+      const h = g('head'), e = g('leftEye');
+      return {
+        head: h ? [+h.rotation.x.toFixed(4), +h.rotation.y.toFixed(4), +h.rotation.z.toFixed(4)] : null,
+        eye: e ? [+e.rotation.x.toFixed(4), +e.rotation.y.toFixed(4)] : null,
+      };
+    },
     rigScale: function () { return rig ? [rig.scale.x, rig.scale.y, rig.scale.z] : null; },
     rigPos:   function () { return rig ? [rig.position.x, rig.position.y, rig.position.z] : null; },
     baseY:    function () { return baseY; },
@@ -2108,6 +2183,159 @@ addEventListener('resize', () => { syncSize(); clearTimeout(rzTimer); rzTimer = 
     },
   };
 
+  /* ===================== 表情合成器 Face =====================
+     有四个人在抢 expressionManager：driveBlink（每帧写 blink）、driveMouth（每帧写五元音）、
+     poke（戳时写、退出时 _face(0) 清零）、情绪（要长期持有）。直接加第五个必然打架，
+     典型表现就是"戳完她突然面无表情"——poke 退出清零，把情绪一起抹了。
+     所以：poke 降级为 overlay（短 TTL、按帧 push，不再直接写），情绪是 base，
+     由这里做唯一合成、唯一写入（表情 + 姿态：头/视线/呼吸）。
+     配方表见 docs/情绪旁路一期实施方案.md §7：加粗的姿态才是主导信号，
+     shy/sad/tired 的表情余弦 >0.85，只调 blendShape 分不开。 */
+  const DEG = Math.PI / 180;
+  const FACE_EXPR = ['happy', 'angry', 'sad', 'relaxed', 'surprised'];
+  const FACE_RECIPE = {
+    // pose：headX 单位度，**正 = 低头**（VRM x+ 低头）；headZ 正 = 向右歪；
+    //       gazeYaw 正 = 看右；gazePitch 正 = 看下；breath 1 = 原幅度。
+    happy:   { expr: { happy: 0.75, relaxed: 0.25 }, pose: { headX: -2.0 } },
+    soft:    { expr: { happy: 0.25, relaxed: 0.80 }, pose: { headX: -1.0, breath: 1.15 } },
+    annoyed: { expr: { angry: 0.55, relaxed: 0.20 }, pose: { headX: 3.0, gazeYaw: 8 } },
+    jealous: { expr: { angry: 0.35, sad: 0.30, surprised: 0.15 },
+               pose: { headX: 2.0, headZ: 2.0, gazeYaw: -10 } },
+    shy:     { expr: { happy: 0.40, relaxed: 0.35 },
+               pose: { headX: 6.0, headZ: -3.0, gazePitch: 12, gazeYaw: -6 } },
+    sad:     { expr: { sad: 0.70, relaxed: 0.20 }, pose: { headX: 5.0, gazePitch: 6, breath: 0.75 } },
+    tired:   { expr: { sad: 0.25, relaxed: 0.60 }, pose: { headX: 4.0, gazePitch: 4, breath: 1.35 } },
+    curious: { expr: { happy: 0.20, surprised: 0.45 },
+               pose: { headX: -4.0, headZ: 4.0, gazeYaw: 4 } },
+  };
+  const TAU_UP   = Math.max(0.05, parseFloat(_q.get('emotau') || '0.18') || 0.18);
+  const TAU_DOWN = Math.max(0.10, parseFloat(_q.get('emotau2') || '0.55') || 0.55);
+  const EMOSPEAK = _q.get('emospeak') !== '0';     // 说话时表情让位口型，默认开
+  const nowSec = () => (performance.now() - t0) / 1000;
+
+  const Face = {
+    emo: { label: null, intensity: 0, src: '' },
+    req: -1, holdUntil: -1, cur: {}, pose: {}, overlays: [], _eyeHeld: false,
+
+    set: function (label, intensity, req, src) {
+      // req 单调：连说两句时旧判定不许盖掉新的（后端也是这条规则）
+      if (typeof req === 'number' && req < this.req) return;
+      if (typeof req === 'number') this.req = req;
+      const lb = (label && FACE_RECIPE[label]) ? label : null;
+      this.emo = { label: lb, intensity: Math.max(0, Math.min(1, +intensity || 0)),
+                   src: src || '' };
+      // 保持 ~3s；说话期间在 tick 里续期，等于"语音时长"
+      this.holdUntil = nowSec() + 3.0;
+    },
+
+    /* poke 等一次性效果：只登记，不直接写。ttl 到期自动退出，无需对方显式清零。 */
+    pushExpr: function (expr, ttlMs) {
+      this.overlays.push({ expr: expr || {}, until: nowSec() + (ttlMs || 140) / 1000 });
+    },
+
+    state: function () {
+      return { label: this.emo.label, intensity: this.emo.intensity, src: this.emo.src,
+               req: this.req, cur: Object.assign({}, this.cur),
+               pose: Object.assign({}, this.pose), overlays: this.overlays.length };
+    },
+
+    tick: function (t, dt) {
+      const now = nowSec();
+      if (window.xiaoyunSpeaking && this.emo.label) {
+        this.holdUntil = Math.max(this.holdUntil, now + 0.5);
+      }
+      const alive = !!this.emo.label && now <= this.holdUntil;
+      const inten = alive ? this.emo.intensity : 0;
+      const rec = alive ? FACE_RECIPE[this.emo.label] : null;
+
+      /* 1) 目标表情：配方 × 强度；说话时整体 ×0.8（happy 自带嘴形会压掉元音） */
+      const tgt = {};
+      const tp = { headX: 0, headZ: 0, gazeYaw: 0, gazePitch: 0, breath: 1 };
+      if (rec) {
+        const sp = (EMOSPEAK && window.xiaoyunSpeaking) ? 0.8 : 1;
+        for (const k in rec.expr) tgt[k] = rec.expr[k] * inten * sp;
+        const p = rec.pose || {};
+        for (const k in tp) {
+          if (p[k] == null) continue;
+          tp[k] = (k === 'breath') ? 1 + (p[k] - 1) * inten : p[k] * inten;
+        }
+      }
+
+      /* 2) 叠加 overlay（poke）：同名取大，再统一 clamp ≤0.85 给口型留余量 */
+      this.overlays = this.overlays.filter(o => o.until >= now);
+      for (const o of this.overlays) {
+        for (const k in o.expr) tgt[k] = Math.max(tgt[k] || 0, o.expr[k]);
+      }
+      for (const k in tgt) tgt[k] = Math.min(0.85, tgt[k]);
+
+      /* 3) 指数平滑：上升快、回落慢（突然归零比不变还假） */
+      const up = 1 - Math.exp(-dt / TAU_UP), dn = 1 - Math.exp(-dt / TAU_DOWN);
+      const em = vrm && vrm.expressionManager;
+      for (const k of FACE_EXPR) {
+        const goal = tgt[k] || 0;
+        const c = this.cur[k] || 0;
+        let v = c + (goal - c) * (goal > c ? up : dn);
+        if (v < 0.002) v = 0;
+        this.cur[k] = v;
+        if (em) { try { em.setValue(k, v); } catch (e) {} }
+      }
+      for (const k in tp) {
+        const rest = (k === 'breath') ? 1 : 0;
+        const c = (this.pose[k] == null) ? tp[k] : this.pose[k];
+        let v = c + (tp[k] - c) * (tp[k] > c ? up : dn);
+        if (Math.abs(v - rest) < 0.001) v = rest;      // 贴合基线时归位，避免长期留 1e-4 的残差
+        this.pose[k] = v;
+      }
+
+      /* 4) 姿态：在 animateBones / poke 写好的绝对姿态上做加法。
+         它们每帧都重写 head/neck，所以这里 += 不会累积。 */
+      const H = vrm && vrm.humanoid;
+      if (!H) return;
+      const get = (nm) => (H.getRawBoneNode ? H.getRawBoneNode(nm) : H.getNormalizedBoneNode(nm));
+      const add = (nm, dx, dy, dz) => {
+        const b = get(nm); if (!b) return;
+        b.rotation.x += dx; b.rotation.y += dy; b.rotation.z += dz;
+      };
+      const pz = this.pose;
+      if (pz.headX || pz.headZ) {
+        add('neck', pz.headX * DEG * 0.30, 0, pz.headZ * DEG * 0.30);
+        add('head', pz.headX * DEG * 0.70, 0, pz.headZ * DEG * 0.70);
+      }
+      /* 视线：情绪激活时**绝对覆盖**（要"低头不敢看"就得不看鼠标），
+         归零时再写一次 home 交还给 gaze（gaze 每帧会重算，不会卡住）。 */
+      const eyeOn = Math.abs(pz.gazeYaw) > 0.05 || Math.abs(pz.gazePitch) > 0.05;
+      if (eyeOn || this._eyeHeld) {
+        for (const nm of ['leftEye', 'rightEye']) {
+          const b = get(nm), h = boneHome[nm];
+          if (!b || !h) continue;
+          b.rotation.set(h.rx + pz.gazePitch * DEG, h.ry - pz.gazeYaw * DEG, h.rz);
+        }
+        this._eyeHeld = eyeOn;
+      }
+      /* 呼吸：animateBones 用 rig.scale 做呼吸，这里只叠幅度，不改周期
+         （周期在 animateBones 内部，硬改会和挤压/取景抢写）。 */
+      const ba = pz.breath - 1;
+      if (rig && Math.abs(ba) > 0.01) {
+        const e = Math.sin(t * 1.4) * 0.0035 * ba;
+        rig.scale.y *= (1 + e);
+        rig.scale.x *= (1 - e * 0.5);
+        rig.scale.z *= (1 - e * 0.5);
+      }
+    },
+  };
+  window.__xyFace = Face;
+
+  /* ?emo=jealous:0.7 预览指定表情（A/B 截图用），不参与业务轮询 */
+  (function () {
+    const pv = (_q.get('emo') || '').trim();
+    if (!pv) return;
+    const m = pv.split(':');
+    if (!FACE_RECIPE[m[0]]) { report('vrmface 未知标签 ' + m[0]); return; }
+    Face.set(m[0], m.length > 1 ? parseFloat(m[1]) : 0.8, 1, 'preview');
+    Face.holdUntil = Infinity;
+    report('vrmface preview=' + pv);
+  })();
+
   /* 帧钩子：gaze 平滑 + 戳一下挤压。
      由渲染循环在 animateBones 之后、vrm.update 之前调用（顺序不能改：
      animateBones 每帧会写 rig.scale，poke 必须后写才能盖住；vrm.update 要吃最终骨骼）。 */
@@ -2121,6 +2349,9 @@ addEventListener('resize', () => { syncSize(); clearTimeout(rzTimer); rzTimer = 
        眼神模式选 always 也一样让位给动作（与 PMX 页同一套策略）。 */
     if (gaze.hasBones && !dancing) gaze.update(dt);
     poke.tick(t);
+    /* 表情合成必须在 poke 之后：poke 已把本帧的姿态写成绝对量，
+       Face 再在其上做加法；poke 的表情则通过 overlay 参与合成，不再直接写。 */
+    Face.tick(t, dt);
   };
 })();
 </script>

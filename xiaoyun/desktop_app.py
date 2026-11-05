@@ -381,7 +381,8 @@ def set_topmost(title, on):
 # ---------------------------------------------- 鼠标钩子（接管点击/拖动）
 # 为什么需要它：窗口是分层色键透明窗口，微软明确说明 WebView2 的内容区域
 # 收不到鼠标事件（事件会穿透到后面的程序），所以点她、拖她都失效。
-# 这里用系统级低级鼠标钩子替代：点击 = 打开聊天窗，按住拖动 = 挪窗口。
+# 这里用系统级低级鼠标钩子替代：点击 = 戳一下（不弹窗），按住拖动 = 挪窗口。
+# （该 MouseHook 类已被下方 Catcher 取代，仅作历史备用；实际生效的是 Catcher）
 WH_MOUSE_LL = 14
 WM_MOUSEMOVE = 0x0200
 WM_LBUTTONDOWN = 0x0201
@@ -399,10 +400,8 @@ CTRL_DRAG_THRESHOLD = 26    # 光标按在麦克风/模式控件上时的阈值�
 #   所以精确命中都落空后，只把**麦克风**的命中区再放宽这么多像素兜一刀。
 #   模式标签不做放宽：它与麦克风上下相邻，两边都放宽会互相抢命中。
 CTRL_NEAR_TOL = 16
-# ★ 双击判定窗口（秒）：click_mode="poke" 时，单击是"戳一下"，窗口内第二下才算"要聊天"。
-#   0.42s 是 Windows 默认双击速度（500ms）偏紧一档 —— 取太宽会让"连戳两下玩"误开窗口，
-#   取太窄则正常双击打不开。命中判定不比对位置：她的手就这么大，换位置连点也算双击。
-CLICK_DOUBLE_SEC = 0.42
+# ★ 旧的双击判定窗口（CLICK_DOUBLE_SEC）已随"点击弹窗"一起移除：
+#   现在连点只影响戳的观感（受惊->嫌弃）和连戳语音，不再有"第二下要聊天"的分支。
 
 # 只在她身体这一块响应点击/拖动（窗口是隐形的，若按整个窗口判定，
 # 点旁边桌面空白也会误触发）。数值是窗口宽高的占比，由实测模型包围盒留出余量得来。
@@ -488,15 +487,15 @@ class MouseHook(threading.Thread):
         self.inside = False
         self.dragging = False
         if was_inside and not dragged:
-            self.app.show_chat()          # 单击 = 打开聊天窗
+            # 备用钩子（当前未启用，实际走 Catcher）：点身体只戳一下，不开聊天窗
+            note("（备用钩子）单击身体 -> 戳一下")
         elif dragged:
             clamp_into_view(PET_TITLE)
             note("拖动结束，窗口位置已更新")
 
     def on_right(self, x, y):
-        rect = self.pet_rect()
-        if rect and self.in_hitbox(rect[1], x, y):
-            self.app.show_chat()
+        # 备用钩子：右键菜单由 Catcher 负责，这里不再做任何动作
+        return
 
     def run(self):
         def proc(nCode, wParam, lParam):
@@ -546,7 +545,7 @@ WS_EX_NOACTIVATE = 0x08000000
 LWA_ALPHA = 0x00000002
 CATcher_ALPHA = 1          # 1/255，几乎不可见
 
-# ---- 右键弹出菜单（在她身上点右键 = 切换人物模型）----
+# ---- 右键弹出菜单（在她身上点右键 = 换形象 / 换动作 / 换性格）----
 WM_NULL = 0x0000
 MF_STRING, MF_GRAYED, MF_CHECKED, MF_SEPARATOR = 0x0000, 0x0002, 0x0008, 0x0800
 MF_POPUP = 0x0010          # 第三参数是子菜单句柄
@@ -559,15 +558,16 @@ MENU_VOICE_BASE = 0x2400       # 音色项的命令 ID 基址（+ 序号）
 MENU_PRESET_BASE = 0x2500      # 人设/声线项的命令 ID 基址（+ 序号）
 MENU_MOTION_BASE = 0x2600      # 动作（VMD 舞蹈）项的命令 ID 基址（+ 序号；0 = 内置待机）
 MENU_GAZE_BASE = 0x2700        # 眼神追随模式（off / idle / always）
-MENU_CLICK_BASE = 0x2800       # 点击行为（poke / chat）
+# 点击行为已固定为「戳一下」（2026-11-03 用户要求：点她身上永远不弹对话框）。
+# 原 click_mode 的 poke/chat 两档一并移除；这里保留基址常量只是为了不打断
+# 命令 ID 分段的连续性（菜单里已经没有任何项使用它）。
+MENU_CLICK_BASE = 0x2800       # 已停用（原：点击行为 poke / chat）
 MENU_POKE_STYLE_BASE = 0x2900  # 点击手感（soft / vivid）
+MENU_PROACTIVE_BASE = 0x2A00   # 主动关怀节奏（quiet / normal / lively / clingy）
 MENU_TUNE = 0x2203             # 「调参：亮度/饱和度」（打开调色小窗）
 
-# 点击行为两档：标签直接说清"双击还能不能开聊天窗"，避免找不到聊天入口
-CLICK_CHOICES = [
-    ("poke", "戳一下（双击才开聊天窗）"),
-    ("chat", "直接打开聊天窗（老行为）"),
-]
+# 点击行为已固定为「戳一下」：单击/双击/连点都只上报 /api/poke，永不打开聊天窗。
+# （2026-11-03 用户要求：对话框只从菜单栏打开）
 
 # 点击手感两档：动作幅度。名字直接说观感，不说技术词。
 # ★ 为什么做成档而不是滑杆：她的人设是高冷御姐，"Q 弹"过头会崩人设，
@@ -575,6 +575,19 @@ CLICK_CHOICES = [
 POKE_STYLE_CHOICES = [
     ("soft",  "克制（被打扰到）"),
     ("vivid", "明显（有点 Q 弹）"),
+]
+
+# 人物形象 / 动作的分组（后端 /api/models、/api/motions 会带下来，这里只是兜底：
+# 后端没起、或者壳比后端旧的时候，菜单不至于变成一坨没有分组的平铺列表）
+DEFAULT_MODEL_GROUPS = [
+    ("daily",   "日常"),
+    ("swim",    "泳装"),
+    ("dress",   "礼服 · 旗袍 · 居家"),
+    ("special", "特殊形态"),
+]
+DEFAULT_MOTION_GROUPS = [
+    ("idle",  "待机 · 小动作"),
+    ("dance", "舞蹈"),
 ]
 
 # 眼神三档：标签要让人一眼看懂"和动作的关系"——这是用户提过的困惑点
@@ -585,86 +598,213 @@ GAZE_CHOICES = [
 ]
 
 
+def _norm_groups(raw, default):
+    """后端给的分组统一成 [(key, 标题)]。
+
+    后端为了带 count 用的是 dict（{"key","label","count"}），壳里只需要 key+标题；
+    两种形状都吃，免得以后接口加字段就得两边一起改。
+    """
+    out = []
+    for g in raw or []:
+        if isinstance(g, dict):
+            k = g.get("key")
+            if k:
+                out.append((k, g.get("label") or k))
+        elif isinstance(g, (list, tuple)) and len(g) >= 2:
+            out.append((g[0], g[1]))
+    return out or list(default)
+
+
+def _sub(label, kids):
+    """二级子菜单的一行（右键菜单 -> 人物形象 -> 日常 -> 卡芙卡 · 泳装）。"""
+    return ("sub", label, 0, False, kids)
+
+
+def _grouped_kids(items, groups, base, cur_key, decorate=None):
+    """扁平清单 -> 按 group 折叠的二级子菜单数据；返回 (kids, 当前项显示名)。
+
+    ★ 未知组的项归进末尾「其它」，绝不静默丢弃：后端加了新分组而壳还没刷新、
+      或者某个 json 的 group 写错时，菜单里少一个形象比多一个分组难查得多。
+    ★ 组标题带项数（「日常（16）」），不用展开也知道里面有几个。
+    """
+    known = [k for k, _ in groups]
+    buckets, others = {}, []
+    cur_label = ""
+    for i, it in enumerate(items):
+        key = it.get("key") or ""
+        lab = it.get("label") or key or ("%d" % i)
+        if decorate:
+            lab = decorate(it, lab)
+        if key == cur_key:
+            cur_label = lab
+        row = (lab, base + i, key == cur_key)
+        g = it.get("group") or known[0]
+        if g in known:
+            buckets.setdefault(g, []).append(row)
+        else:
+            others.append(row)
+    kids = []
+    for gk, glab in groups:
+        rows = buckets.get(gk) or []
+        if rows:
+            kids.append(_sub("%s（%d）" % (glab, len(rows)), rows))
+    if others:
+        kids.append(_sub("其它（%d）" % len(others), others))
+    return kids, cur_label
+
+
 def popup_menu_layout(app):
     """右键菜单内容（纯数据，不碰 Win32，便于脱离窗口自检）。
 
     返回 [(kind, label, cmd_id, checked, children)]，kind ∈ {header, sep, item, submenu}；
     submenu 的 children = [(label, cmd_id, checked), ...]，cmd_id=0 表示只读提示行。
-    顺序：人物模型 → 调参 → 动作 → 对话模型 → 音色 → 人设/声线 → 打开聊天窗 → 打开日志文件夹。
+    ★ 大列表（人物模型/动作/对话模型）一律折叠成 submenu（与托盘菜单一致）——
+      平铺的话 33 个模型 + 19 个动作能把菜单顶出屏幕外（实测）。
+      子菜单标题带「当前选中项」，不展开也能看到现在用的是谁。
     auto 模式会在标签后面补一句"现在走谁"，省得猜自动路由选了什么。"""
     rows = []
-    rows.append(("header", "人物模型（点击切换）", 0, False, None))
-    rows.append(("sep", "", 0, False, None))
-    if not app.models:
-        rows.append(("header", "（取不到模型列表，后端没起？）", 0, False, None))
-    for i, md in enumerate(app.models):
-        label = md.get("label") or md.get("key") or ("模型%d" % i)
-        # VRM 与 PMX 都能选：VRM 页只认 vrm，PMX 页只认 pmx。
-        # 在标签后缀标出格式，免得切了没反应时一头雾水。
-        _kind = md.get("kind") or ("vrm" if md.get("vrm") else "pmx")
-        if _kind == "vrm":
-            label += "  · VRM"
-        rows.append(("item", label, MENU_MODEL_BASE + i,
-                     md.get("key") == app.model_key, None))
+
+    # ---- 人物形象（两级：服装类型 -> 角色，标题带当前形象）----
+    # 名字只留「角色 · 服装」（数据源是各模型的 model.json / label），
+    # 不写作品名与 "MDJSN edit / 素体 / 头发物理优化" 这类后缀 —— 菜单是拿来选的，不是拿来看出处的。
+    _m_deco = lambda md, lab: lab + ("（VRM）" if (md.get("kind") or "") == "vrm" else "")
+    model_kids, cur_model_label = _grouped_kids(
+        app.models, _norm_groups(getattr(app, "model_groups", None), DEFAULT_MODEL_GROUPS),
+        MENU_MODEL_BASE, app.model_key, _m_deco)
+    if not model_kids:
+        model_kids = [("（取不到形象列表，后端没起？）", 0, False)]
+    rows.append(("submenu",
+                 "人物形象: " + (cur_model_label or "未设置"),
+                 0, False, model_kids))
 
     # ★ 调参：只动"观感"（亮度/饱和度/对比度/伽马），和动作库完全无关
     rows.append(("item", "调参：亮度 / 饱和度…", MENU_TUNE, False, None))
 
-    rows.append(("sep", "", 0, False, None))
-    rows.append(("header", "动作（点击切换）", 0, False, None))
-    if not getattr(app, "motions", None):
-        rows.append(("header", "（取不到动作列表，后端没起？）", 0, False, None))
-    for i, md in enumerate(app.motions):
-        label = md.get("label") or md.get("key") or ("动作%d" % i)
-        rows.append(("item", label, MENU_MOTION_BASE + i,
-                     md.get("key") == app.motion_key, None))
+    # ---- 动作（两级：待机小动作 / 舞蹈，标题带当前动作；app.motions 第 0 项是内置待机）----
+    # 名字只留「动作名 · 时长」，括号里只说选之前想知道的事（只动手 / 只动上半身）。
+    motion_kids, cur_motion_label = _grouped_kids(
+        getattr(app, "motions", None) or [],
+        _norm_groups(getattr(app, "motion_groups", None), DEFAULT_MOTION_GROUPS),
+        MENU_MOTION_BASE, getattr(app, "motion_key", "idle"))
+    if not motion_kids:
+        motion_kids = [("（取不到动作列表，后端没起？）", 0, False)]
+    rows.append(("submenu",
+                 "动作: " + (cur_motion_label or "内置待机"),
+                 0, False, motion_kids))
 
     # 眼神追随紧跟在动作后面：它和动作素材是同一处冲突点 ——
     # 动作自带眼骨轨道（实测 15 个 VMD 里 13 个有 右目/左目/両目 轨道），
     # 选"只在待机时追"就交给动作表演，选"始终追"就由鼠标说了算。
+    _cur_gaze = next((lab for key, lab in GAZE_CHOICES
+                      if key == getattr(app, "gaze_mode", "always")), "")
     gaze_kids = [(lab, MENU_GAZE_BASE + i, key == getattr(app, "gaze_mode", "always"))
                  for i, (key, lab) in enumerate(GAZE_CHOICES)]
-    rows.append(("submenu", "眼神追随（看向鼠标）", 0, False, gaze_kids))
+    rows.append(("submenu", "眼神追随: " + (_cur_gaze or "未设置"), 0, False, gaze_kids))
 
-    # 点击行为紧跟在眼神后面：两者都是"对她的身体做动作会怎么反应"这一类设置
-    click_kids = [(lab, MENU_CLICK_BASE + i, key == getattr(app, "click_mode", "poke"))
-                  for i, (key, lab) in enumerate(CLICK_CHOICES)]
-    rows.append(("submenu", "点击反应（单击她身上）", 0, False, click_kids))
+    # 点击行为没有可选项了 —— 点她身上一律只戳一下、不弹窗（2026-11-03 用户要求），
+    # 所以「点击反应」子菜单整块移除，只留下面的手感档。
 
-    # 手感档紧跟点击反应：一条是"点一下会发生什么"，一条是"反应有多大"
+    # 手感档：点一下的反应有多大
+    _cur_style = next((lab for key, lab in POKE_STYLE_CHOICES
+                       if key == getattr(app, "poke_style", "soft")), "")
     style_kids = [(lab, MENU_POKE_STYLE_BASE + i,
                    key == getattr(app, "poke_style", "soft"))
                   for i, (key, lab) in enumerate(POKE_STYLE_CHOICES)]
-    rows.append(("submenu", "点击手感（动作幅度）", 0, False, style_kids))
+    rows.append(("submenu", "点击手感: " + (_cur_style or "未设置"), 0, False, style_kids))
 
-    rows.append(("sep", "", 0, False, None))
-    rows.append(("header", "对话模型（点击切换）", 0, False, None))
-    if not app.chat_models:
-        rows.append(("header", "（取不到对话模型列表，后端没起？）", 0, False, None))
+    # 主动关怀节奏：多久主动说一句。档位清单来自后端 /api/proactive（唯一定义处），
+    # 选完后端热改情境引擎的两个阈值，不用重启；标题带"几分钟一句"省得展开猜。
+    care_kids = [(lv.get("label") or lv.get("key") or "-", MENU_PROACTIVE_BASE + i,
+                  lv.get("key") == getattr(app, "proactive_key", ""))
+                 for i, lv in enumerate(getattr(app, "proactive_levels", None) or [])]
+    if not care_kids:
+        care_kids = [("（取不到档位，后端没起？）", 0, False)]
+    rows.append(("submenu",
+                 "主动关怀: " + (getattr(app, "proactive_label", "") or "未设置"),
+                 0, False, care_kids))
+
+    # ---- 对话模型（折叠子菜单，标题带当前大脑）----
+    chat_kids = []
+    cur_chat_label = ""
     for i, cm in enumerate(app.chat_models):
         label = cm.get("label") or cm.get("id") or ("模型%d" % i)
         cid = cm.get("id") or ""
         if cid == "auto" and getattr(app, "chat_best", ""):
             label += "（现在走 %s）" % app.chat_best.split("/")[-1].replace(":free", "")
-        rows.append(("item", label, MENU_CHATMODEL_BASE + i, cid == app.chat_model, None))
+        if cid == app.chat_model:
+            cur_chat_label = cm.get("label") or cm.get("id") or ""
+        chat_kids.append((label, MENU_CHATMODEL_BASE + i, cid == app.chat_model))
+    if not chat_kids:
+        chat_kids = [("（取不到对话模型列表，后端没起？）", 0, False)]
+    rows.append(("submenu",
+                 "对话模型: " + (cur_chat_label or (app.chat_label or "未设置")),
+                 0, False, chat_kids))
 
     rows.append(("sep", "", 0, False, None))
     voice_kids = [(o.get("label") or o.get("id") or "-", MENU_VOICE_BASE + i,
                    o.get("id") == app.voice_id) for i, o in enumerate(app.voices)]
     if not voice_kids:
         voice_kids = [("（取不到音色列表，后端没起？）", 0, False)]
-    rows.append(("submenu", "音色（切换声音）", 0, False, voice_kids))
+    rows.append(("submenu",
+                 "音色: " + (app.voice_label or "未设置"),
+                 0, False, voice_kids))
 
     preset_kids = [(p.get("label") or p.get("key") or "-", MENU_PRESET_BASE + i,
                     p.get("key") == app.preset_key) for i, p in enumerate(app.presets)]
     if not preset_kids:
         preset_kids = [("（取不到人设列表，后端没起？）", 0, False)]
-    rows.append(("submenu", "人设 / 声线（切换人格）", 0, False, preset_kids))
+    rows.append(("submenu",
+                 "人设/声线: " + (app.preset_label or "未设置"),
+                 0, False, preset_kids))
 
     rows.append(("sep", "", 0, False, None))
     rows.append(("item", "打开聊天窗", MENU_CHAT, False, None))
     rows.append(("item", "打开日志文件夹（排查问题）", MENU_LOGS, False, None))
     return rows
+
+def _append_kids(host, kids):
+    """往 host 里塞一层子项；kids 里若有 ('sub', 标题, 0, False, 子项) 就再折一层。
+
+    人物形象和动作都是两级（服装类型 -> 角色 / 待机小动作舞蹈 -> 动作名）：
+    31 个形象平铺要滚动半天，折一层就一眼看得完。
+    """
+    for ent in kids:
+        if len(ent) >= 5 and ent[0] == "sub":
+            sub2 = user32.CreatePopupMenu()
+            _append_kids(sub2, ent[4])
+            user32.AppendMenuW(host, MF_POPUP | MF_STRING, sub2, ent[1])
+            continue
+        c_label, c_cmd, c_checked = ent[0], ent[1], ent[2]
+        if not c_cmd:            # 只读提示行（例如"取不到列表"）
+            user32.AppendMenuW(host, MF_STRING | MF_GRAYED, 0, c_label)
+        else:
+            user32.AppendMenuW(host, MF_STRING | (MF_CHECKED if c_checked else 0),
+                               c_cmd, c_label)
+
+
+def build_popup_hmenu(rows, menu=None):
+    """把 popup_menu_layout() 的行数据画成真的 Win32 菜单（HMENU）。
+
+    ★ 单独拎出来是为了能不弹窗地验证：弹一次菜单要真人点，而这个函数可以用
+      tools/dump_menu_tree.py 建完直接读回来（项数 / 文字 / 勾选 / 层级），
+      层级或勾选写错时不用等肉眼发现。
+    """
+    if menu is None:
+        menu = user32.CreatePopupMenu()
+    for kind, label, cmd_id, checked, children in rows:
+        if kind == "sep":
+            user32.AppendMenuW(menu, MF_SEPARATOR, 0, None)
+        elif kind == "header":
+            user32.AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, label)
+        elif kind == "submenu":
+            sub = user32.CreatePopupMenu()
+            _append_kids(sub, children)
+            user32.AppendMenuW(menu, MF_POPUP | MF_STRING, sub, label)
+        else:
+            user32.AppendMenuW(menu, MF_STRING | (MF_CHECKED if checked else 0),
+                               cmd_id, label)
+    return menu
+
 
 WNDPROC = ctypes.WINFUNCTYPE(ctypes.c_ssize_t, wintypes.HWND, ctypes.c_uint,
                              wintypes.WPARAM, wintypes.LPARAM)
@@ -753,7 +893,6 @@ class Catcher(threading.Thread):
         self._placed = False
         self._warned = False
         self.pet_hwnd = None
-        self._last_click = 0.0      # 上一次单击身体的 monotonic 时间（双击判定用）
         self._cls = "XiaoyunCatcher"
         self._hot = None                 # 按下时命中的语音控件: 'mic' / 'mode' / None
         self.mic_hit = None              # 麦克风按钮的屏幕矩形 (x,y,w,h)
@@ -927,42 +1066,24 @@ class Catcher(threading.Thread):
             threading.Thread(target=self.app.voice_mode_toggle, daemon=True).start()
         else:
             # 页面坐标还没到位时（刚启动的头一两秒、或页面上报异常），点击绝不该被理解
-            # 成"点了她的身体"：否则用户点麦克风会莫名其妙弹出聊天窗（已实际发生）。
+            # 成"点了她的身体"：否则用户点麦克风会被当成戳她一下（已实际发生）。
             # 这段时间只记日志、不动作；超过 20 秒仍未拿到坐标才退回原行为，
             # 免得万一页面始终没上报就把她彻底点不动了。
             if self.mic_hit is None and (time.time() - getattr(self.app, "t0", 0.0)) < 20:
-                note("控件坐标尚未就绪，本次点击忽略（不打开聊天窗）")
+                note("控件坐标尚未就绪，本次点击忽略")
                 return
             # 放到别的地方去做，让 WndProc 立刻返回（不能阻塞消息循环）
             self._body_click()
 
     def _body_click(self):
-        """单击身体区的分发。
+        """单击身体区的分发：永远是「戳一下」，绝不打开聊天窗。
 
-        click_mode = "poke"（默认）：单击 = 戳一下（只上报，页面播反应，不弹窗）；
-                                    窗口内第二下 = 双击 -> 打开聊天窗。
-        click_mode = "chat"        ：老行为，单击直接打开聊天窗。
-
-        ★ 为什么把"开窗"降级成双击：用户反馈"点上去就被文字窗糊脸"。
-          聊天窗另有三个入口（右键菜单「打开聊天窗」/ 托盘 / Ctrl+Alt+X），不会丢。
-        ★ 连点判定用 time.monotonic 而不是 time.time：系统时间被校准时
-          time.time 会跳变，可能把"两秒后的点击"算成双击。
+        ★ 2026-11-03 按用户要求彻底移除"点击弹对话框"：单击、双击、连点
+          一律只上报 /api/poke，由页面播挤压 + 表情，声音走后端连戳判定
+          （见 xiaoyun_server.py 的 POKE 连戳反馈）。
+          对话框唯一入口 = 菜单栏（右键菜单 / 托盘菜单）与 Ctrl+Alt+X 热键，
+          点她身上再也不会被文字窗糊脸。
         """
-        app = self.app
-        mode = getattr(app, "click_mode", "poke")
-        now = time.monotonic()
-        gap = now - self._last_click
-        dbl = gap < CLICK_DOUBLE_SEC
-        self._last_click = now
-
-        if mode == "chat":
-            note("点击身体区 -> 打开聊天窗（位移 %dpx）" % self.max_move)
-            threading.Thread(target=app.show_chat, daemon=True).start()
-            return
-        if dbl:
-            note("双击身体区（间隔 %.0fms）-> 打开聊天窗" % (gap * 1000))
-            threading.Thread(target=app.show_chat, daemon=True).start()
-            return
         note("戳一下（单击，位移 %dpx）" % self.max_move)
         threading.Thread(target=self._post_poke, daemon=True).start()
 
@@ -1009,7 +1130,7 @@ class Catcher(threading.Thread):
             note("戳一下上报失败: %r" % (e,))
 
     def on_right(self):
-        """在她身上点右键：弹出菜单，切换人物模型 / 对话模型，并留一个日志入口。
+        """在她身上点右键：弹出菜单，切换形象 / 动作 / 性格 / 对话模型，并留一个日志入口。
         菜单内容由 popup_menu_layout() 生成（纯数据，可脱离 GUI 自检），这里只负责
         画出来和分发命令。选中后热生效，不需要重启任何东西。"""
         app = self.app
@@ -1019,29 +1140,16 @@ class Catcher(threading.Thread):
         menu = user32.CreatePopupMenu()
         if not menu:
             return
-        for kind, label, cmd_id, checked, children in rows:
-            if kind == "sep":
-                user32.AppendMenuW(menu, MF_SEPARATOR, 0, None)
-            elif kind == "header":
-                user32.AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, label)
-            elif kind == "submenu":
-                sub = user32.CreatePopupMenu()
-                for c_label, c_cmd, c_checked in children:
-                    if not c_cmd:            # 只读提示行（例如"取不到列表"）
-                        user32.AppendMenuW(sub, MF_STRING | MF_GRAYED, 0, c_label)
-                    else:
-                        user32.AppendMenuW(sub, MF_STRING | (MF_CHECKED if c_checked else 0),
-                                           c_cmd, c_label)
-                user32.AppendMenuW(menu, MF_POPUP | MF_STRING, sub, label)
-            else:
-                user32.AppendMenuW(menu, MF_STRING | (MF_CHECKED if checked else 0),
-                                   cmd_id, label)
+        build_popup_hmenu(rows, menu)
 
         pt = wintypes.POINT()
         user32.GetCursorPos(ctypes.byref(pt))
-        diag("右键菜单 | 人物模型=%d项 对话模型=%d项 音色=%d项 人设=%d项 | 当前: 形象=%s 对话=%s(%s) 音色=%s%s"
-             % (len(models), len(chat_models), len(app.voices), len(app.presets),
-                app.model_key or "-", app.chat_label or "-", app.chat_model or "-",
+        diag("右键菜单 | 形象=%d项 动作=%d项(%s) 对话模型=%d项 音色=%d项 人设=%d项 | 当前: 形象=%s 动作=%s 对话=%s(%s) 音色=%s%s"
+             % (len(models), len(app.motions),
+                next((r[1] for r in rows if isinstance(r[1], str) and r[1].startswith("动作")), "-"),
+                len(chat_models), len(app.voices), len(app.presets),
+                app.model_key or "-", app.motion_label or app.motion_key or "-",
+                app.chat_label or "-", app.chat_model or "-",
                 app.voice_label or "-", app.voice_id or ""))
         # 经典怪癖的官方解法：TrackPopupMenu 前必须把菜单宿主窗提到前台，
         # 收尾再补一个 WM_NULL，否则菜单外点第一下关不掉菜单。
@@ -1052,7 +1160,7 @@ class Catcher(threading.Thread):
         user32.PostMessageW(self.hwnd, WM_NULL, 0, 0)
 
         if cmd:
-            diag("右键菜单命令 cmd=0x%04X（人物模型 %d 项 / 对话模型 %d 项）"
+            diag("右键菜单命令 cmd=0x%04X（形象 %d 项 / 对话模型 %d 项）"
                  % (cmd, len(models), len(chat_models)))
         if cmd == MENU_CHAT:
             threading.Thread(target=app.show_chat, daemon=True).start()
@@ -1085,16 +1193,17 @@ class Catcher(threading.Thread):
             if 0 <= idx < len(GAZE_CHOICES):
                 threading.Thread(target=app.set_gaze_mode,
                                  args=(GAZE_CHOICES[idx][0],), daemon=True).start()
-        elif MENU_CLICK_BASE <= cmd < MENU_CLICK_BASE + 0x100:
-            idx = cmd - MENU_CLICK_BASE
-            if 0 <= idx < len(CLICK_CHOICES):
-                threading.Thread(target=app.set_click_mode,
-                                 args=(CLICK_CHOICES[idx][0],), daemon=True).start()
         elif MENU_POKE_STYLE_BASE <= cmd < MENU_POKE_STYLE_BASE + 0x100:
             idx = cmd - MENU_POKE_STYLE_BASE
             if 0 <= idx < len(POKE_STYLE_CHOICES):
                 threading.Thread(target=app.set_poke_style,
                                  args=(POKE_STYLE_CHOICES[idx][0],), daemon=True).start()
+        elif MENU_PROACTIVE_BASE <= cmd < MENU_PROACTIVE_BASE + 0x100:
+            idx = cmd - MENU_PROACTIVE_BASE
+            if 0 <= idx < len(app.proactive_levels):
+                threading.Thread(target=app.set_proactive,
+                                 args=(app.proactive_levels[idx].get("key"),),
+                                 daemon=True).start()
         elif cmd >= MENU_MODEL_BASE:
             idx = cmd - MENU_MODEL_BASE
             if 0 <= idx < len(models):
@@ -1525,15 +1634,20 @@ class App:
         self.voices = []              # 音色列表（来自后端 /api/voice-options）
         self.voice_id = ""            # 当前音色的 edge voice id
         self.voice_label = ""         # 当前音色的中文名
-        self.models = []              # 人物模型列表（来自后端 /api/models）
-        self.model_key = ""           # 当前生效的人物模型
+        self.models = []              # 人物形象列表（来自后端 /api/models）
+        self.model_key = ""           # 当前生效的人物形象
+        self.model_groups = list(DEFAULT_MODEL_GROUPS)   # 形象分组（后端给的，含标题与顺序）
+        self.motion_groups = list(DEFAULT_MOTION_GROUPS)  # 动作分组
         self.model_label = ""
         self.motions = []             # 动作列表（来自后端 /api/motions；首项固定=内置待机）
         self.motion_key = "idle"      # 当前动作（idle = 内置待机微动作）
         self.motion_label = ""
         self.gaze_mode = "always"     # 眼神追随：off / idle / always（后端持久化，见 /api/gaze）
-        self.click_mode = "poke"      # 点击身体的行为：poke（戳一下，双击开窗）/ chat（老行为）
+        self.click_mode = "poke"      # 已固定：点身上只戳一下，永不弹聊天窗（2026-11-03）
         self.poke_style = "soft"      # 点击手感幅度：soft（克制）/ vivid（明显）
+        self.proactive_key = ""       # 主动关怀档位（quiet/normal/lively/clingy；后端持久化）
+        self.proactive_label = ""     # 档位的中文说明（带"几分钟一句"）
+        self.proactive_levels = []    # 档位清单（来自后端 /api/proactive，菜单据此渲染）
         self.chat_models = []         # 对话模型列表（来自后端 /api/chat-model）
         self.chat_model = ""          # 当前对话模型 id
         self.chat_label = ""          # 当前对话模型的中文名
@@ -1761,7 +1875,7 @@ class App:
                                      lambda i, it: None, enabled=False)]
 
     def build_menu(self):
-        diag("build_menu | 人设=%d 音色=%d 对话模型=%d 人物模型=%d | 当前: 人设=%s 音色=%s 对话=%s(%s) 形象=%s"
+        diag("build_menu | 人设=%d 音色=%d 对话模型=%d 形象=%d | 当前: 人设=%s 音色=%s 对话=%s(%s) 形象=%s"
              % (len(self.presets), len(self.voices), len(self.chat_models), len(self.models),
                 self.preset_key or "-", self.voice_id or "-",
                 self.chat_label or "-", self.chat_model or "-", self.model_key or "-"))
@@ -1791,15 +1905,18 @@ class App:
             # ★ 对话模型：切"谁在想事情"（or_proxy 上游）；点了先探活再落盘，下一句即生效
             pystray.MenuItem("对话模型（切换大脑）",
                              pystray.Menu(*self._safe_items(self._chat_items, "对话模型"))),
-            # ★ 人物模型：桌面形象切换（和她身上点右键是同一份数据、同一个动作）
-            pystray.MenuItem("人物模型（切换形象）",
+            # ★ 人物形象：桌面换装（和她身上点右键是同一份数据、同一个动作）
+            pystray.MenuItem("人物形象（换一套）",
                              pystray.Menu(*self._safe_items(self._model_items, "人物模型"))),
             # ★ 调参：只动观感（亮度/饱和度/对比度/伽马），拖完自动存进该形象的 model.json
             pystray.MenuItem("调参（亮度 / 饱和度）",
                              lambda i, it: threading.Thread(target=self.open_tuner, daemon=True).start()),
             # ★ 动作：VMD 舞蹈 / 内置待机（模之屋动作库，assets/motions/）
-            pystray.MenuItem("动作（切换舞步）",
+            pystray.MenuItem("动作（跳舞 / 待机）",
                              pystray.Menu(*self._safe_items(self._motion_items, "动作"))),
+            # ★ 主动关怀：多久主动说一句（档位在后端 data/proactive.json，热生效）
+            pystray.MenuItem("主动关怀（多久说一句）",
+                             pystray.Menu(*self._safe_items(self._proactive_items, "主动关怀"))),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("🎤 语音对话：按键说一句（或按 Ctrl+Alt+V）",
                              lambda i, it: self.voice_toggle()),
@@ -1980,6 +2097,7 @@ class App:
         try:
             j = self._voice_get("/api/models")
             self.models = j.get("models") or []
+            self.model_groups = j.get("groups") or list(DEFAULT_MODEL_GROUPS)
             self.model_key = j.get("current") or ""
             self.model_label = ""
             for m in self.models:
@@ -2004,16 +2122,39 @@ class App:
         self.rebuild_menu()          # 勾选立刻反映（子项也要重建）
 
     def _model_items(self):
-        """人物模型清单做成 radio 子菜单（托盘用；右键菜单由 Catcher 原生绘制）。"""
-        items = []
+        """人物形象做成两级 radio 子菜单（托盘用；右键菜单由 Catcher 原生绘制）。
+
+        分组与右键菜单同源（后端 /api/models 的 groups），名字只用「角色 · 服装」——
+        托盘和右键是同一个选择，两边长得不一样只会让人怀疑是不是两套设置。
+        """
+        groups = _norm_groups(self.model_groups, DEFAULT_MODEL_GROUPS)
+        known = dict(groups)
+        buckets, others = {}, []
         for m in self.models:
             k = m.get("key") or ""
-            items.append(pystray.MenuItem(
-                m.get("label") or k,
+            lab = m.get("label") or k
+            if (m.get("kind") or "") == "vrm":
+                lab += "（VRM）"
+            row = pystray.MenuItem(
+                lab,
                 (lambda kk: (lambda i, it: self.set_model(kk)))(k),
-                checked=(lambda kk: (lambda item: self.model_key == kk))(k)))
+                checked=(lambda kk: (lambda item: self.model_key == kk))(k))
+            g = m.get("group") or groups[0][0]
+            if g in known:
+                buckets.setdefault(g, []).append(row)
+            else:
+                others.append(row)          # 未知组不丢，兜到「其它」
+        items = []
+        for gk, glab in groups:
+            rows = buckets.get(gk) or []
+            if rows:
+                items.append(pystray.MenuItem("%s（%d）" % (glab, len(rows)),
+                                              pystray.Menu(*rows)))
+        if others:
+            items.append(pystray.MenuItem("其它（%d）" % len(others),
+                                          pystray.Menu(*others)))
         if not items:
-            items.append(pystray.MenuItem("（还没取到模型列表，后端没起？）",
+            items.append(pystray.MenuItem("（还没取到形象列表，后端没起？）",
                                           lambda i, it: None, enabled=False))
         return items
 
@@ -2023,8 +2164,12 @@ class App:
         后端返回的 current 可能是 'idle'（内置待机），把它并进列表第 0 项统一做 radio。"""
         try:
             j = self._voice_get("/api/motions")
-            idle = {"key": "idle", "label": j.get("idle_label") or "内置待机（呼吸/挥手）"}
+            # 内置待机是页面自己那套微动作，不在 assets/motions 里，所以在这里补一条；
+            # group=idle 让它和"摆手呼吸/丘丘摇"这些轻动作排在同一个子菜单里
+            idle = {"key": "idle", "group": "idle",
+                    "label": j.get("idle_label") or "内置待机（呼吸 / 歪头 / 挥手）"}
             self.motions = [idle] + (j.get("motions") or [])
+            self.motion_groups = j.get("groups") or list(DEFAULT_MOTION_GROUPS)
             self.motion_key = j.get("current") or "idle"
             self.motion_label = idle["label"]
             for m in self.motions:
@@ -2068,32 +2213,22 @@ class App:
         self.refresh_gaze()
         self.rebuild_menu()
 
-    # ---- 点击行为（单击戳一下 / 直接开聊天窗）+ 手感档（soft / vivid）----
+    # ---- 点击手感档（soft / vivid）；点击行为已固定为「戳一下」不弹窗 ----
     def refresh_click(self):
-        """从后端读当前点击行为与手感档（/api/click）。失败时保持原值。
+        """从后端读点击手感档（/api/click）。失败时保持原值。
 
-        两件事合一个请求读：它们同源、同频变化，没必要开两条轮询。
+        ★ 只读 style：mode 已固化为 poke（点她身上不弹对话框），
+          即使 data/click_mode.txt 里还留着历史的 "chat" 也不采纳。
         """
         try:
             j = self._voice_get("/api/click")
-            m = j.get("mode") or "poke"
-            self.click_mode = m if m in ("poke", "chat") else "poke"
+            self.click_mode = "poke"
             s = j.get("style") or "soft"
             self.poke_style = s if s in ("soft", "vivid") else "soft"
             return True
         except Exception as e:
             diag("刷新失败 | /api/click: %r" % (e,))
             return False
-
-    def set_click_mode(self, mode):
-        """切点击行为：后端持久化。只影响壳的点击分发，页面无需感知。"""
-        try:
-            j = self._voice_post("/api/click/config", {"mode": mode})
-            note("点击行为 -> %s" % (j.get("label") or mode))
-        except Exception as e:
-            note("切换点击行为失败: %r" % (e,))
-        self.refresh_click()
-        self.rebuild_menu()
 
     def set_poke_style(self, style):
         """切点击手感：后端持久化 → 页面下次轮询 /api/gaze 自动跟随（不需要重载）。"""
@@ -2105,51 +2240,130 @@ class App:
         self.refresh_click()
         self.rebuild_menu()
 
+    # ---- 主动关怀节奏（多久主动说一句）；档位定义在后端，壳只负责选 ----
+    def refresh_proactive(self):
+        """从后端读档位清单与当前值（/api/proactive）。失败时保持原值。
+
+        ★ 清单不写死在壳里：档位/标签/秒数只有后端一处定义，
+          这样加档或调秒数不用两边同步改（历史上的双份数据都出过不同步）。
+        """
+        try:
+            j = self._voice_get("/api/proactive")
+            cur = j.get("current") or {}
+            self.proactive_levels = j.get("levels") or []
+            self.proactive_key = cur.get("key") or ""
+            self.proactive_label = cur.get("label") or ""
+            return True
+        except Exception as e:
+            diag("刷新失败 | /api/proactive: %r" % (e,))
+            return False
+
+    def set_proactive(self, level):
+        """切主动关怀节奏：后端落盘并立刻改运行中的阈值，不需要重启后端。"""
+        try:
+            j = self._voice_post("/api/proactive", {"level": level})
+            if not j.get("ok"):
+                note("切换主动关怀失败: %s" % j.get("error"))
+            else:
+                cur = j.get("current") or {}
+                note("主动关怀 -> %s" % (cur.get("label") or level))
+                if j.get("warning"):
+                    diag("主动关怀持久化告警: %s" % j["warning"])
+        except Exception as e:
+            note("切换主动关怀失败: %r" % (e,))
+        self.refresh_proactive()
+        self.rebuild_menu()
+
     def _motion_items(self):
-        """动作清单做成 radio 子菜单（托盘用）。"""
-        items = []
+        """动作做成两级 radio 子菜单（托盘用）。
+
+        原来会把 json 里的 note（值是 "loop"）拼在名字后面，菜单里就出现
+        「Phut hon（5 秒·循环） —— loop」这种半截英文；note 是给程序看的数据，
+        不该出现在给人点的菜单里，这里只显示 label。
+        """
+        groups = _norm_groups(self.motion_groups, DEFAULT_MOTION_GROUPS)
+        known = dict(groups)
+        buckets, others = {}, []
         for m in self.motions:
             k = m.get("key") or ""
-            label = m.get("label") or k
-            note_ = m.get("note") or ""
-            if note_:
-                label = "%s —— %s" % (label, note_)
-            items.append(pystray.MenuItem(
-                label,
+            row = pystray.MenuItem(
+                m.get("label") or k,
                 (lambda kk: (lambda i, it: self.set_motion(kk)))(k),
-                checked=(lambda kk: (lambda item: self.motion_key == kk))(k)))
+                checked=(lambda kk: (lambda item: self.motion_key == kk))(k))
+            g = m.get("group") or groups[0][0]
+            if g in known:
+                buckets.setdefault(g, []).append(row)
+            else:
+                others.append(row)
+        items = []
+        for gk, glab in groups:
+            rows = buckets.get(gk) or []
+            if rows:
+                items.append(pystray.MenuItem("%s（%d）" % (glab, len(rows)),
+                                              pystray.Menu(*rows)))
+        if others:
+            items.append(pystray.MenuItem("其它（%d）" % len(others),
+                                          pystray.Menu(*others)))
         if not items:
             items.append(pystray.MenuItem("（还没取到动作列表，后端没起？）",
                                           lambda i, it: None, enabled=False))
         return items
 
+    def _proactive_items(self):
+        """主动关怀档位做成 radio 子菜单（托盘用）。清单来自后端 /api/proactive。"""
+        items = []
+        for lv in self.proactive_levels:
+            k = lv.get("key") or ""
+            items.append(pystray.MenuItem(
+                lv.get("label") or k,
+                (lambda kk: (lambda i, it: self.set_proactive(kk)))(k),
+                checked=(lambda kk: (lambda item: self.proactive_key == kk))(k)))
+        if not items:
+            items.append(pystray.MenuItem("（还没取到档位，后端没起？）",
+                                          lambda i, it: None, enabled=False))
+        return items
+
     def preset_watch(self):
-        """定期刷新人设 / 音色无关的动态列表：人设 + 人物模型。
-        新加的人设文件或模型 20 秒内自动出现在托盘菜单里。"""
+        """定期刷新动态列表：人设 / 人物模型 / 动作 / 对话模型 / 音色。
+        新加的人设文件、模型、VMD 或音色，20 秒内自动出现在托盘与右键菜单里。"""
         last = None
         while not self.quitting:
             try:
                 self.refresh_models()          # 模型清单也一起刷（右键菜单同源）
                 self.refresh_motions()         # 动作清单（新放进 motions 目录的 VMD 自动出现）
                 self.refresh_chat_models()     # 对话模型可能被后端/curl 改过，跟着刷
+                # ★ 音色清单原先只在启动时取一次：后端加了新音色后，菜单永远不出现，
+                #   只能整壳重启（2026-11-05 实测 —— 加完 6 个豆包女声后菜单里没有）。
+                #   它和上面几个列表同源（都是后端下发），一起刷才有意义。
+                self.refresh_voices()
                 self.refresh_gaze()            # 眼神模式同理（curl 改过也要反映到勾选）
                 self.refresh_click()           # 点击行为同理
+                self.refresh_proactive()       # 主动关怀档位同理（json 手改也要反映）
                 if self.refresh_presets():
+                    # ★ 变化检测必须包含 label/note 等显示文字：只比 key 的话，
+                    #   改动作/模型的显示名（json 里改 label）后菜单永远显示旧文字
+                    #   （2026-11-01 实测：改了 4 个动作的 label，托盘 20 分钟不刷新）。
                     cur = (self.preset_key,
-                           tuple(p.get("key") for p in self.presets),
+                           tuple((p.get("key"), p.get("label")) for p in self.presets),
                            self.model_key,
-                           tuple(m.get("key") for m in self.models),
+                           tuple((m.get("key"), m.get("label")) for m in self.models),
                            self.motion_key,
-                           tuple(m.get("key") for m in self.motions),
+                           tuple((m.get("key"), m.get("label"), m.get("note")) for m in self.motions),
                            self.chat_model,
-                           tuple(m.get("id") for m in self.chat_models),
+                           tuple((m.get("id"), m.get("label")) for m in self.chat_models),
                            self.gaze_mode,
-                           self.click_mode)
+                           self.click_mode,
+                           self.proactive_key,
+                           tuple((l.get("key"), l.get("label"))
+                                 for l in self.proactive_levels),
+                           # 音色清单与当前音色也进指纹：只刷新不重建菜单等于没刷
+                           self.voice_id,
+                           tuple((o.get("id"), o.get("label")) for o in self.voices))
                     if cur != last:
-                        diag("列表变化 -> 人设=%s 形象=%s 动作=%s 对话=%s(%s) | 人设%d项 音色%d项 对话%d项 形象%d项 动作%d项"
+                        diag("列表变化 -> 人设=%s 形象=%s 动作=%s 对话=%s(%s) 音色=%s | 人设%d项 音色%d项 对话%d项 形象%d项 动作%d项"
                              % (self.preset_key or "-", self.model_key or "-",
                                 self.motion_key or "-", self.chat_model or "-",
-                                self.chat_label or "-",
+                                self.chat_label or "-", self.voice_label or "-",
                                 len(self.presets), len(self.voices),
                                 len(self.chat_models), len(self.models),
                                 len(self.motions)))
@@ -2360,9 +2574,10 @@ class App:
         self.refresh_motions()      # 动作清单：托盘「动作（切换舞步）」子菜单的数据源
         self.refresh_gaze()         # 眼神模式：勾选要跟后端持久化的值一致（不是写死 always）
         self.refresh_click()        # 点击行为同理：否则重启后勾选回落到 poke，与文件不符
-        diag("启动自检 | 人设=%d项 音色=%d项 对话模型=%d项 人物模型=%d项 动作=%d项"
+        self.refresh_proactive()    # 主动关怀档位：菜单勾选要跟 data/proactive.json 一致
+        diag("启动自检 | 人设=%d项 音色=%d项 对话模型=%d项 人物模型=%d项 动作=%d项 主动关怀=%s"
              % (len(self.presets), len(self.voices), len(self.chat_models),
-                len(self.models), len(self.motions)))
+                len(self.models), len(self.motions), self.proactive_label or "-"))
         threading.Thread(target=self.run_tray, daemon=True).start()
         threading.Thread(target=self.preset_watch, daemon=True).start()
         # 注意：不要启用系统级鼠标钩子（MouseHook）。

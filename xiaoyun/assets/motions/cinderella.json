@@ -1,6 +1,8 @@
 {
   "key": "cinderella",
-  "label": "灰姑娘（140 秒）",
+  "label": "灰姑娘 · 2 分 20 秒",
+  "group": "dance",
+  "order": 170,
   "file": "cinderella.vmd",
   "note": ""
 }

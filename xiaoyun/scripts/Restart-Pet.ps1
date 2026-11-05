@@ -38,15 +38,17 @@ foreach ($n in @('http_proxy', 'https_proxy', 'all_proxy', 'no_proxy',
 
 $workdir  = "D:\LunaAI\project-nn\xiaoyun"
 $deskPy   = Join-Path $workdir ".venv\Scripts\pythonw.exe"
-$deskApp  = Join-Path $workdir "scripts\desktop_app.py"
+# ★ 2026-10-24 迁移后三个服务本体在 xiaoyun\ 根，不在 scripts\（scripts 下只有 ps1/bat）。
+#   旧路径 scripts\desktop_app.py 已不存在 -> pythonw 直接报 Errno 2 起不来（2026-11-01 实测）。
+$deskApp  = Join-Path $workdir "desktop_app.py"
 $pageHtml = Join-Path $workdir "pages\desktoppmx.html"
-$srvApp   = Join-Path $workdir "scripts\xiaoyun_server.py"
-$asrApp   = Join-Path $workdir "scripts\asr_service.py"
+$srvApp   = Join-Path $workdir "xiaoyun_server.py"
+$asrApp   = Join-Path $workdir "asr_service.py"
 $stopPs   = Join-Path $workdir "scripts\Stop-Xiaoyun.ps1"
 $startPs  = Join-Path $workdir "scripts\Start-Xiaoyun.ps1"
-$deskPid  = Join-Path $workdir "scripts\desktop.pid"
-$deskOut  = Join-Path $workdir "scripts\desktop_out.log"
-$deskErr  = Join-Path $workdir "scripts\desktop_err.log"
+$deskPid  = Join-Path $workdir "desktop.pid"
+$deskOut  = Join-Path $workdir "logs\desktop_out.log"
+$deskErr  = Join-Path $workdir "logs\desktop_err.log"
 $runLog   = Join-Path $workdir "scripts\启动日志.txt"
 $selfLog  = Join-Path $workdir "restart_log.txt"
 $probePy  = Join-Path $workdir ".venv\Scripts\python.exe"
@@ -113,9 +115,9 @@ function Get-DesktopProcIds {
         if ($_.ProcessId -eq $PID) { return $false }
         if ($_.Name -in @('powershell.exe', 'pwsh.exe', 'cmd.exe', 'conhost.exe',
                           'WindowsTerminal.exe', 'explorer.exe', 'wscript.exe')) { return $false }
-        if ($cl -like '*xiaoyun\scripts\xiaoyun_server.py*') { return $false }
-        if ($cl -like '*xiaoyun\scripts\asr_service.py*')   { return $false }
-        return ($cl -like '*xiaoyun\scripts\desktop_app.py*')
+        if ($cl -like '*xiaoyun\xiaoyun_server.py*' -or $cl -like '*xiaoyun\scripts\xiaoyun_server.py*') { return $false }
+        if ($cl -like '*xiaoyun\asr_service.py*'   -or $cl -like '*xiaoyun\scripts\asr_service.py*')   { return $false }
+        return ($cl -like '*xiaoyun\desktop_app.py*' -or $cl -like '*xiaoyun\scripts\desktop_app.py*')
     })
     foreach ($p in $procs) { $ids += [int]$p.ProcessId }
 
@@ -125,7 +127,7 @@ function Get-DesktopProcIds {
         if ($raw -and $raw.Trim() -match '^\d+$') {
             $oldId = [int]$raw.Trim()
             $rec = Get-CimInstance Win32_Process -Filter "ProcessId=$oldId" -ErrorAction SilentlyContinue
-            if ($rec -and $rec.CommandLine -and $rec.CommandLine -like '*xiaoyun\scripts\desktop_app.py*') {
+            if ($rec -and $rec.CommandLine -and ($rec.CommandLine -like '*xiaoyun\desktop_app.py*' -or $rec.CommandLine -like '*xiaoyun\scripts\desktop_app.py*')) {
                 if ($ids -notcontains $oldId) { $ids += $oldId }
             }
         }
@@ -150,10 +152,10 @@ function Get-XiaoyunProcIds {
             if ($_.ProcessId -eq $PID) { return $false }
             if ($_.Name -in @('powershell.exe', 'pwsh.exe', 'cmd.exe', 'conhost.exe',
                               'WindowsTerminal.exe', 'explorer.exe', 'wscript.exe')) { return $false }
-            ($cl -like '*xiaoyun\scripts\xiaoyun_server.py*') -or
-            ($cl -like '*xiaoyun\scripts\asr_service.py*')   -or
-            ($cl -like '*xiaoyun\scripts\embed_service.py*') -or
-            ($cl -like '*xiaoyun\scripts\desktop_app.py*')
+            ($cl -like '*xiaoyun\xiaoyun_server.py*' -or $cl -like '*xiaoyun\scripts\xiaoyun_server.py*') -or
+            ($cl -like '*xiaoyun\asr_service.py*'   -or $cl -like '*xiaoyun\scripts\asr_service.py*')   -or
+            ($cl -like '*xiaoyun\embed_service.py*' -or $cl -like '*xiaoyun\scripts\embed_service.py*') -or
+            ($cl -like '*xiaoyun\desktop_app.py*'   -or $cl -like '*xiaoyun\scripts\desktop_app.py*')
         } | Select-Object -ExpandProperty ProcessId)
     } catch { return @() }
 }

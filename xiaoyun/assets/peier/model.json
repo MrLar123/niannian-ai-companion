@@ -1,5 +1,8 @@
 {
   "key": "peier",
+  "label": "姵儿",
+  "group": "daily",
+  "order": 75,
   "params": {
     "contrast": 0.99,
     "saturate": 1.66,

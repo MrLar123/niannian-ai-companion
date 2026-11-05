@@ -1,6 +1,8 @@
 {
   "key": "xiangxiang",
-  "label": "想想念念（10 秒）",
+  "label": "想想念念 · 10 秒",
+  "group": "dance",
+  "order": 115,
   "file": "xiangxiang.vmd",
   "note": ""
 }

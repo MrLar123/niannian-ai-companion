@@ -1,6 +1,8 @@
 {
   "key": "aini",
-  "label": "爱你（49 秒）",
+  "label": "爱你 · 49 秒",
+  "group": "dance",
+  "order": 145,
   "file": "aini.vmd",
   "note": ""
 }

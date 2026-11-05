@@ -1,0 +1,9 @@
+{
+  "key": "idle_daiji",
+  "label": "摆手呼吸 · 8 秒",
+  "group": "idle",
+  "order": 5,
+  "file": "idle_daiji.vmd",
+  "note": "loop",
+  "credit": "动作：刘TWT（模之屋 aplaybox.com/details/motion/kAn8QZdQJ4ng）"
+}

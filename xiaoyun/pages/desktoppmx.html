@@ -131,6 +131,9 @@
 import * as THREE from 'three';
 import { MMDLoader } from 'three/addons/loaders/MMDLoader.js';
 import { MMDAnimationHelper } from 'three/addons/animation/MMDAnimationHelper.js';
+/* 与 MMDLoader 内部 import 的是**同一个模块实例**，所以改它的 Parser 原型会直接
+   影响加载器 —— 用来白拿一份 PMX 解析结果（材质型表情的数据只在这儿有）。 */
+import { MMDParser } from 'three/addons/libs/mmdparser.module.js';
 window.__xyTHREE = THREE;   // 调试：控制台可直接 new THREE.DataTexture 等
 
 /* 口型字典预加载（225KB 静态 JSON，本地回环，一次性） */
@@ -324,8 +327,8 @@ const ACTIVITY_FACE_SPEC = {
   success: [['にこり', 1.00], ['笑い', 0.70]],
 };
 
-/* 表情参数 */
-const SMILE_BASE  = 0.55;   // 微笑常驻强度（0~1；可爱风微笑，不夸张）→ 想更甜就调大
+/* 表情参数（SMILE_BASE 可按模型覆盖：见 assets/emo_slots.json 的 idle 段） */
+let SMILE_BASE   = 0.55;    // 微笑常驻强度（0~1；可爱风微笑，不夸张）→ 想更甜就调大
 const BLINK_EVERY = 3.6;    // 每多少秒眨一次眼
 
 /* ===================== 观感增强：对比度 =====================
@@ -687,66 +690,370 @@ const fillL = new THREE.DirectionalLight(0xdfe4f0, 0.20); fillL.position.set(-2.
 const rimL  = new THREE.DirectionalLight(0xcdd9ff, 0.60); rimL.position.set(-0.4, 1.2, -2.4); scene.add(rimL);
 
 let rig = null, bones = {}, boneHome = {}, baseY = 0, fitting = false;
-let morphMesh = null;                 // 承载表情（morph）的网格
-let mBlink = -1, mSmile = -1, mWink = -1;   // 眨眼 / 微笑 / 单眼眨 的 morph 索引，<0 表示模型没有
-let pokeFace = { surprise: [], annoyed: [] };   // 点击反馈表情组 [[morphIndex, weight], ...]
+
+/* ============ 表情（morph）多网格层 ============
+   PMX 是按材质拆网格的：一个模型可能是「身体/头发/脸/眼」多个 SkinnedMesh，
+   每个网格各自带一份 morphTargetDictionary + morphTargetInfluences。
+   旧实现只写主网格，于是"脸 = 独立材质"的模型上会出现「情绪算出来了、脸一点不动」，
+   当时被误判成"标定不可靠"。现在统一走「名字 → 所有带这个名字的网格」：
+   写一次等于写全部，模型怎么拆材质都不影响。 */
+let morphMeshes = [];        // [{mesh, dict, inf}]，按表情数量降序
+let morphMesh = null;        // 主网格（表情最多的那个），仅用于上报/兼容
+const MORPH_CACHE = {};      // 名字 → [{inf, idx}]（每帧都要查，缓存掉字典查找）
+
+function collectMorphMeshes(root) {
+  const list = [];
+  if (root && root.traverse) {
+    root.traverse((o) => {
+      if (o.morphTargetDictionary && o.morphTargetInfluences &&
+          Object.keys(o.morphTargetDictionary).length) {
+        list.push({ mesh: o, dict: o.morphTargetDictionary, inf: o.morphTargetInfluences });
+      }
+    });
+  }
+  list.sort((a, b) => Object.keys(b.dict).length - Object.keys(a.dict).length);
+  morphMeshes = list;
+  morphMesh = list.length ? list[0].mesh : null;
+  for (const k in MORPH_CACHE) delete MORPH_CACHE[k];
+  return list;
+}
+function morphTargets(name) {
+  const out = [];
+  for (const m of morphMeshes) {
+    const i = m.dict[name];
+    if (i !== undefined) out.push({ inf: m.inf, idx: i });
+  }
+  return out;
+}
+function mt(name) {
+  let v = MORPH_CACHE[name];
+  if (v === undefined) { v = morphTargets(name); MORPH_CACHE[name] = v; }
+  return v;
+}
+function mhas(name) {
+  /* 伪表情 __tint 不在 morph 字典里，它的"存在"取决于有没有找到脸材质 */
+  if (name === TINT_NAME) return TINT_MATS.length > 0;
+  return mt(name).length > 0 || !!MAT_MORPHS[name];
+}
+function mset(name, w) {
+  const ts = mt(name);
+  if (!ts.length) return;
+  w = Math.max(0, Math.min(1, +w || 0));
+  for (const t of ts) t.inf[t.idx] = w;
+}
+function mget(name) {
+  let v = 0;
+  for (const t of mt(name)) if (t.inf[t.idx] > v) v = t.inf[t.idx];
+  return v;
+}
+
+/* ===================== 材质型表情（PMX morph type 8） =====================
+   ★ 为什么必须自己实现：MMDLoader 把材质 morph 也登记进 morphTargetDictionary，
+     但算属性增量时的分支是 `else if (morph.type === 8) { // TODO: implement }` ——
+     顶点增量数组全是 0。于是「照れ」（脸红）这类**改材质颜色**的表情写多少权重
+     画面都不变。实测：wuluo 的 照れ = 0.00%，同模型 まばたき = 1.93%，
+     这不是阈值问题，是压根没执行。31 个模型里 12 个因为这个"缺 blush 槽位"。
+
+   数据从哪来：MMDLoader.loadPMX 内部调用 MMDParser.Parser#parsePmx，
+   我们拦同一个原型方法留一份结果（下面 hookPmxParser），模型就绪后提取完即丢弃。
+   不额外下载、不二次解析 —— PMX 动辄十几 MB，二次解析在 16G 内存机器上纯亏。 */
+const MAT_MORPHS = {};      // 表情名 → [{mi, d:[r,g,b,a], a:alpha增量}]
+let MAT_OBJS = [];          // PMX 材质下标 → three 材质对象
+let MAT_BASE = [];          // 同上 → 基准值（色 + 不透明度）
+let MAT_NAMES = [];         // 参与每帧写回的表情名
+const MAT_DIRTY = new Set();  // 本帧被改过的材质下标（下一帧只复位这些）
+
+/* 白拿 PMX 解析结果：只钩一次，之后每次加载都会覆盖 _pmxCapture */
+let _pmxCapture = null;
+(function hookPmxParser() {
+  const P = MMDParser && MMDParser.Parser && MMDParser.Parser.prototype;
+  if (!P || P.__xyPmxHooked) return;
+  const orig = P.parsePmx;
+  if (typeof orig !== 'function') return;
+  P.parsePmx = function () {
+    const d = orig.apply(this, arguments);
+    _pmxCapture = d;
+    return d;
+  };
+  P.__xyPmxHooked = true;
+})();
+
+/* 模型就绪后调用：把材质 morph 表抽出来，顺手把解析结果丢掉。
+   必须在 enhanceMaterials() 之后调用 —— 基准色要取"最终上屏色"，
+   否则后续复位会把 enhanceMaterials 的压暗效果抹掉。 */
+function captureMatMorphs(mesh) {
+  const data = _pmxCapture;
+  _pmxCapture = null;
+  for (const k in MAT_MORPHS) delete MAT_MORPHS[k];
+  MAT_OBJS = []; MAT_BASE = []; MAT_NAMES = []; MAT_DIRTY.clear(); TINT_MATS = [];
+  if (!mesh) return { morphs: 0, mats: 0 };
+  const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+  MAT_OBJS = mats;
+  MAT_BASE = mats.map((m) => ({
+    c: (m && m.color) ? m.color.clone() : null,
+    o: m ? m.opacity : 1,
+  }));
+  resolveTintMats();          // 脸材质（兜底脸红用），不依赖 PMX 解析结果
+  if (!data || !data.morphs) return { morphs: 0, mats: mats.length };
+  let nEl = 0;
+  for (const mo of data.morphs) {
+    if (!mo || mo.type !== 8 || !mo.elements || !mo.elements.length) continue;
+    const els = [];
+    for (const e of mo.elements) {
+      if (e.index === undefined || !MAT_OBJS[e.index]) continue;
+      els.push({ mi: e.index, d: e.diffuse, a: (e.diffuse && e.diffuse.length > 3) ? e.diffuse[3] : 0 });
+    }
+    if (els.length) { MAT_MORPHS[mo.name] = els; MAT_NAMES.push(mo.name); nEl += els.length; }
+  }
+  return { morphs: MAT_NAMES.length, mats: mats.length, els: nEl };
+}
+
+/* 每帧调用：先把上一帧改过的材质复位，再按权重叠加。
+   PMX 材质 morph 是**加算**（在基准值上加重），所以复位是必须的，
+   不然权重降下来颜色会一直红着退不掉。
+   weights 里可以带伪表情 '__tint'（脸染色兜底），与材质 morph 共用一次复位。 */
+function applyMatMorph(weights) {
+  if (!MAT_NAMES.length && !TINT_MATS.length) return;
+  for (const mi of MAT_DIRTY) {
+    const m = MAT_OBJS[mi], b = MAT_BASE[mi];
+    if (!m || !b) continue;
+    if (b.c && m.color) m.color.copy(b.c);
+    m.opacity = b.o;
+  }
+  MAT_DIRTY.clear();
+  if (!weights) return;
+  for (const nm of MAT_NAMES) {
+    const w = weights[nm];
+    if (!w) continue;
+    const els = MAT_MORPHS[nm];
+    for (const e of els) {
+      const m = MAT_OBJS[e.mi], b = MAT_BASE[e.mi];
+      if (!m || !b || !b.c || !m.color) continue;
+      MAT_DIRTY.add(e.mi);
+      const d = e.d || [0, 0, 0, 0];
+      m.color.setRGB(
+        Math.min(1, Math.max(0, b.c.r + d[0] * w)),
+        Math.min(1, Math.max(0, b.c.g + d[1] * w)),
+        Math.min(1, Math.max(0, b.c.b + d[2] * w)));
+      if (e.a) m.opacity = Math.min(1, Math.max(0, b.o + e.a * w));
+    }
+  }
+  /* 兜底脸红：乘色（不是加色）—— 材质色是贴图乘数，加红会被 1.0 截断看不出 */
+  const tw = Math.max(0, Math.min(1, weights[TINT_NAME] || 0)) * TINT_MAX;
+  if (tw > 0.001) {
+    for (const mi of TINT_MATS) {
+      const m = MAT_OBJS[mi], b = MAT_BASE[mi];
+      if (!m || !b || !b.c || !m.color) continue;
+      MAT_DIRTY.add(mi);
+      m.color.setRGB(
+        b.c.r * (1 - tw) + b.c.r * TINT_COLOR[0] * tw,
+        b.c.g * (1 - tw) + b.c.g * TINT_COLOR[1] * tw,
+        b.c.b * (1 - tw) + b.c.b * TINT_COLOR[2] * tw);
+    }
+  }
+}
+
+let mBlinkName = null, mSmileName = null, mWinkName = null;   // 眨眼 / 常驻微笑 / 单眼眨
+let pokeFace = { surprise: [], annoyed: [] };   // 点击反馈表情组 [[表情名, 权重], ...]
 let activityFace = {};                          // 活动反应表情组（屏幕感知出口，同上格式）
-let mBrow = [];                             // 备用：眉 morph（暂不驱动）
-let mVowels = [-1, -1, -1, -1, -1];         // あ い う え お —— 口型同步用
+let mVowels = [null, null, null, null, null];   // あ い う え お —— 口型同步用
 /* 每元音增益：MMD 的 い/え 表情本身幅度小，单独放大才看得出来 */
 const MOUTH_GAIN = [1.25, 1.75, 1.45, 1.50, 1.35];   // a i u e o
 
-/* 从表情名里按关键词挑出需要的表情。
-   MMD 表情名是日文，常见：まばたき=眨眼、笑い/にこり=笑、ウィンク=单眼眨。
-   匹配不到就留 -1，动画时自动跳过（不会报错）。 */
-function pickMorphs(keys) {
-  const find = (words) => {
+/* ===================== 情绪 → MMD 表情（PMX 版） =====================
+   与 VRM 页 desktopvrm.html 的 Face 合成器同一套配方/强度/时序，差别只在"写到哪"：
+   VRM 有标准 expressionManager（happy/angry/sad/relaxed/surprised 五个固定名），
+   MMD 每个模型的表情名都是日文的、还各不相同 → 只能按关键词解析成 7 个语义槽位。
+   实测 31 个模型覆盖率（tools/pmx_morph_dump.mjs）：
+     smile 31/31  sad 31/31  half 31/31  angry 30/31  shock 30/31  calm 26/31  blush 22/31
+   缺槽位时配方自动降级（少一个表情维度），不会报错、不会面瘫。 */
+/* 伪表情名：没有可用的真实脸红时，用"脸材质染色"兜底（实现见下方 TINT_*） */
+const TINT_NAME = '__tint';
+const EMO_SLOT_WORDS = {
+  /* ★ smile 必须把「にこり」排在「笑い」前面：实测 elysia / wajite_cool 的「笑い」是
+     **闭眼笑**（^ ^），0.7 强度下眼睛完全闭上，看着像在睡觉；「にこり」是睁眼微笑。
+     只有「笑い」的模型只能退回闭眼笑，属模型能力限制 —— 这类模型由
+     assets/emo_slots.json 的 idle 段把常驻笑权重压低（见 resolveEmoSlots）。 */
+  smile: ['にこり', 'にっこり', '微笑', '笑顔', 'にやり２', 'にやり', '笑い'],
+  angry: ['怒り', '怒り２', '真面目', 'キリッ', 'ｷﾘｯ', '怒'],
+  sad:   ['困る', '悲し', '泣', '涙', 'たれ目', '眼角下'],
+  calm:  ['なごみ', '慈愛', 'にっこり', '照れ', 'にやり'],
+  /* shock：びっくり系优先；「はちゅ目」是水汪汪大眼（好奇比 はぅ 更像）；
+     「はぅ」自带脸红+下垂眼，是慌张/害羞，放最后兜底。 */
+  shock: ['びっくり', '驚き', '驚', '目開き', 'はちゅ目', 'はちゅ目２', 'はぅ', '星目'],
+  half:  ['じと目', 'ジト目', '半目', '瞳小', '瞳縦潰れ', '无神', '無神'],
+  blush: ['照れ', '赤面', '脸红', '恥ずかしい', '頬', 'FaceRed', TINT_NAME],
+};
+/* 「照れ消」是**取消**脸红的反向表情（yowane 等模型有），按包含匹配会挑错 →
+   带这些字的 morph 一律不参与。 */
+const SLOT_BAN = ['消', '解除', 'off', 'Off'];
+
+/* ===================== 兜底脸红：直接给脸材质染色 =====================
+   ★ 为什么需要：不少模型的「照れ」是一块独立的**脸红贴片**（材质名 表情），
+     而作者打包时漏了那张贴图（实测 wuluo 的 表情.png 根本不在文件夹里）。
+     空贴图 + MMD 的 CustomBlending → 采样 (0,0,0,0) 混合后什么都不画，
+     于是"照れ 写了 0 效果"。这类模型再怎么调权重都不会出现脸红。
+
+   兜底做法：把**脸材质**向粉红方向压一点（乘性，不是加性 —— MMD 材质色是
+   贴图乘数，加红会顶到 1 后被截断、看不出来）。没有真实脸红可用的模型，
+   害羞时整脸泛红，虽然不是腮红两块，但比"面无表情"正确得多。
+
+   用 pseudo 表情名 __tint 走正常链路：它跟别的表情一样进槽位、进标定、
+   进 emo_slots.json，标定工具能量到它到底多明显。 */
+const TINT_COLOR = [1.0, 0.60, 0.66];   // 脸材质乘色：压绿蓝 = 偏红
+/* 权重换算：实际混合比例 = 槽位权重 × TINT_MAX。这里保持 1.0，
+   把"多强"完全交给 assets/emo_slots.json 里的每模型标定值 —— 脸材质的底色、
+   覆盖面积差别很大，固定强度在一个模型上刚好、在另一个上就整脸通红
+   （实测同一权重：wuluo 面积 4.7%、nier42 面积 22.7%）。 */
+const TINT_MAX = 1.0;
+let TINT_MATS = [];                     // 脸材质下标（在 captureMatMorphs 里解析）
+/* 脸材质命名各家不同：脸 / 顔 / 面（raiden_mdjsn 就是「面」「面2」）/ face / skin。
+   「面」用行首锚定，避免误伤"表面材质"这类；再排除面具/面罩这类涂了会出戏的。 */
+const TINT_FACE_RE = /^(面|脸|顔)|脸|顔|face|skin|肌/i;
+const TINT_FACE_BAN = /具|罩|膜|mask|マスク/i;
+
+function resolveTintMats() {
+  TINT_MATS = [];
+  for (let i = 0; i < MAT_OBJS.length; i++) {
+    const nm = (MAT_OBJS[i] && MAT_OBJS[i].name) || '';
+    if (!TINT_FACE_RE.test(nm)) continue;
+    if (TINT_FACE_BAN.test(nm)) continue;
+    TINT_MATS.push(i);
+  }
+}
+
+/* 配方：expr 是槽位权重（MMD 幅度普遍比 VRM 大，整体比 VRM 页略低）；
+   pose 单位：headX/headZ 度（headX 正 = 低头）、gazeYaw 正 = 看右、gazePitch 正 = 看下、breath 1 = 原幅度。 */
+const EMO_RECIPE = {
+  happy:   { expr: { smile: 0.85, calm: 0.20 }, pose: { headX: -2.0 } },
+  soft:    { expr: { smile: 0.30, calm: 0.65 }, pose: { headX: -1.0, breath: 1.15 } },
+  annoyed: { expr: { angry: 0.55, half: 0.30 }, pose: { headX: 3.0, gazeYaw: 8 } },
+  jealous: { expr: { angry: 0.35, sad: 0.28, shock: 0.12 },
+             pose: { headX: 2.0, headZ: 2.0, gazeYaw: -10 } },
+  shy:     { expr: { smile: 0.35, calm: 0.30, blush: 0.60 },
+             pose: { headX: 6.0, headZ: -3.0, gazePitch: 12, gazeYaw: -6 } },
+  sad:     { expr: { sad: 0.65, half: 0.22 }, pose: { headX: 5.0, gazePitch: 6, breath: 0.75 } },
+  tired:   { expr: { half: 0.55, sad: 0.22 }, pose: { headX: 4.0, gazePitch: 4, breath: 1.35 } },
+  curious: { expr: { shock: 0.42, smile: 0.18 },
+             pose: { headX: -4.0, headZ: 4.0, gazeYaw: 4 } },
+};
+
+/* 槽位 → [{name, w}]：w 是该表情的幅度系数（1 = 直接用配方权重）。
+   允许一个槽位由多个表情组成 —— 有些模型单个表情幅度太弱（实测 kafka 的「にこり」
+   在画面上几乎看不出变化），只能靠「压眉 + 撇嘴」这类组合才看得见。
+   assets/emo_slots.json 里的实测结果优先，没有配置才按关键词猜。 */
+let emoSlots = {};
+let emoSlotNames = [];      // 所有槽位用到的表情名（每帧统一写一遍用）
+
+function slotCfg() { return (window.__xyEmoSlotsCfg || {})[CUR_MODEL_KEY] || null; }
+
+/* 把模型的 morph 名解析成语义槽位。优先级：实测配置 > 精确名 > 包含关键词（跳过反向表情
+   与单边版）> 单边版（_L/_R、左/右，效果减半也好过没有）。 */
+function resolveEmoSlots(names) {
+  const cfg = slotCfg();
+  const okName = (k) => !SLOT_BAN.some(b => k.indexOf(b) >= 0);
+  const pick = (words) => {
+    for (const w of words) if (mhas(w) && okName(w)) return w;
     for (const w of words) {
-      for (const k of keys) if (k.indexOf(w) >= 0) return k;
+      for (const k of names) {
+        if (k.indexOf(w) < 0 || !okName(k)) continue;
+        if (k.indexOf('_L') >= 0 || k.indexOf('_R') >= 0) continue;
+        return k;
+      }
+    }
+    for (const w of words) {
+      for (const k of names) {
+        if (k.indexOf(w) < 0 || !okName(k)) continue;
+        return k;   // 最后手段：单边版
+      }
     }
     return null;
   };
-  const b = find(['まばたき', 'blink', 'Blink', '瞬き', '眨眼']);
-  const s = find(['笑い', 'にこり', 'にっこり', 'smile', 'Smile', '笑顔', '微笑']);
-  const w = find(['ウィンク', 'wink', 'Wink']);
-  const dict = morphMesh.morphTargetDictionary || {};
-  if (b && dict[b] !== undefined) mBlink = dict[b];
-  if (s && dict[s] !== undefined) mSmile = dict[s];
-  if (w && dict[w] !== undefined) mWink = dict[w];
 
-  /* 点击反馈表情：按 POKE_FACE_SPEC 解析成 [[索引, 权重], ...]。
+  emoSlots = {};
+  for (const s in EMO_SLOT_WORDS) {
+    const parts = [];
+    const ov = cfg && cfg.slots && cfg.slots[s];
+    if (ov && ov.length) {
+      for (const p of ov) if (p && p.name && mhas(p.name)) parts.push({ name: p.name, w: p.w || 1 });
+    }
+    if (!parts.length) {
+      const nm = pick(EMO_SLOT_WORDS[s]);
+      if (nm) parts.push({ name: nm, w: 1 });
+    }
+    emoSlots[s] = parts;
+  }
+
+  /* 常驻微笑：实测配置优先（实测发现有的模型「笑い」是闭眼笑，常驻 0.55 会让眼睛
+     一直闭着，看着像睡着了 —— 这类模型的 idle 会换表情或大幅降权）。 */
+  const idle = cfg && cfg.idle;
+  if (idle && idle.name && mhas(idle.name)) {
+    mSmileName = idle.name;
+    SMILE_BASE = Math.max(0, Math.min(1, +idle.w));
+  } else {
+    mSmileName = pick(['にこり', 'にっこり', '微笑', '笑顔', 'にやり', '笑い']);
+    SMILE_BASE = 0.55;
+  }
+
+  const pool = [];
+  for (const s in emoSlots) for (const p of emoSlots[s]) if (pool.indexOf(p.name) < 0) pool.push(p.name);
+  if (mSmileName && pool.indexOf(mSmileName) < 0) pool.push(mSmileName);
+  emoSlotNames = pool;
+
+  /* 活动反应没解析出来时退化成笑肌 */
+  if ((!activityFace.success || !activityFace.success.length) && mSmileName) {
+    activityFace.success = [[mSmileName, 0.9]];
+  }
+  return emoSlots;
+}
+
+/* 解析 + 上报，并留一个"配置到货后重解析"的钩子（emo_slots.json 是异步拉的） */
+function applySlotConfig(names) {
+  resolveEmoSlots(names);
+  report('pmxemo meshes=' + morphMeshes.length + ' ' +
+         Object.keys(emoSlots).map((k) => k + '=' +
+           (emoSlots[k].map((p) => p.name + '@' + p.w).join('+') || '—')).join(' ') +
+         ' | idle=' + mSmileName + '@' + SMILE_BASE.toFixed(2));
+  window.__xyRediscoverSlots = function () { applySlotConfig(names); };
+}
+
+/* 从表情名里按关键词挑出需要的表情。
+   MMD 表情名是日文，常见：まばたき=眨眼、にこり=微笑、ウィンク=单眼眨。
+   匹配不到就留 null，动画时自动跳过（不会报错）。 */
+function pickMorphs(names) {
+  const find = (words) => {
+    for (const w of words) {
+      for (const k of names) if (k.indexOf(w) >= 0 && mhas(k)) return k;
+    }
+    return null;
+  };
+  mBlinkName = find(['まばたき', 'blink', 'Blink', '瞬き', '眨眼']);
+  mWinkName = find(['ウィンク', 'wink', 'Wink']);
+  /* 常驻微笑不在这里决定：它要读实测配置，放在 resolveEmoSlots 里。 */
+
+  /* 点击反馈表情：按 POKE_FACE_SPEC 解析成 [[表情名, 权重], ...]。
      换模型没有这些表情时组会变短甚至为空，反应自动退化成"只有身体动作"。 */
   for (const grp in POKE_FACE_SPEC) {
-    pokeFace[grp] = [];
-    for (const [nm, w] of POKE_FACE_SPEC[grp]) {
-      if (dict[nm] !== undefined) pokeFace[grp].push([dict[nm], w]);
-    }
+    pokeFace[grp] = POKE_FACE_SPEC[grp].filter((e) => mhas(e[0]));
   }
 
   /* 活动反应表情：同样按名字解析，找不到的跳过；两组全缺时 success 退化为笑肌 */
   for (const grp in ACTIVITY_FACE_SPEC) {
-    activityFace[grp] = [];
-    for (const [nm, w] of ACTIVITY_FACE_SPEC[grp]) {
-      if (dict[nm] !== undefined) activityFace[grp].push([dict[nm], w]);
-    }
-  }
-  if ((!activityFace.success || !activityFace.success.length) && mSmile >= 0) {
-    activityFace.success = [[mSmile, 0.9]];
+    activityFace[grp] = ACTIVITY_FACE_SPEC[grp].filter((e) => mhas(e[0]));
   }
 
   /* 口型：MMD 标准表情名是「あいうえお」，部分模型用 A/I/U/E/O */
   const VOWELS = [['あ', 'A', 'a'], ['い', 'I', 'i'], ['う', 'U', 'u'],
                   ['え', 'E', 'e'], ['お', 'O', 'o']];
-  const exact = (words) => {
-    for (const wd of words) if (dict[wd] !== undefined) return dict[wd];
-    for (const wd of words) {
-      for (const k of keys) if (k.indexOf(wd) >= 0) return dict[k];
+  mVowels = VOWELS.map((ws) => {
+    for (const wd of ws) if (mhas(wd)) return wd;
+    for (const wd of ws) {
+      for (const k of names) if (k.indexOf(wd) >= 0 && mhas(k)) return k;
     }
-    return -1;
-  };
-  mVowels = VOWELS.map(exact);
-  window.__xyMouthReady = mVowels.filter(v => v >= 0).length;
-  report('pmxexpr blink=' + mBlink + ' smile=' + mSmile + ' wink=' + mWink +
+    return null;
+  });
+  window.__xyMouthReady = mVowels.filter(Boolean).length;
+  report('pmxexpr blink=' + mBlinkName + ' wink=' + mWinkName +
          ' vowels=' + mVowels.join(',') +
          ' poke=' + pokeFace.surprise.map(e => e[0]).join('/') + '|' +
          pokeFace.annoyed.map(e => e[0]).join('/'));
@@ -971,6 +1278,19 @@ manager.setURLModifier((url) => {
 });
 const loader = new MMDLoader(manager);
 
+/* 单模型表情实测配置（由 tools/pmx_emo_calib2.mjs 生成，写在 assets/emo_slots.json）：
+   按模型覆盖「槽位用哪个表情」「常驻微笑用哪个/多强」。取不到就退回页面内置关键词规则，
+   功能不受影响（只是弱幅度模型上的表情会不明显）。 */
+fetch('/assets/emo_slots.json', { cache: 'no-store' })
+  .then((r) => (r.ok ? r.json() : null))
+  .then((j) => {
+    if (!j) return;
+    window.__xyEmoSlotsCfg = j;
+    if (typeof window.__xyRediscoverSlots === 'function') window.__xyRediscoverSlots();
+    report('pmxemoconfig ' + Object.keys(j).filter(k => k[0] !== '_').length + ' models');
+  })
+  .catch(() => {});
+
 function loadModel(modelUrl, resPath) {
   stopDance(true);            // 换模型：先卸掉旧动作、清空旧骨骼快照
   danceMesh = null; boneSnap = null; danceRoot = null;
@@ -1018,7 +1338,7 @@ function loadModel(modelUrl, resPath) {
   gaze.hasBones = !!(bones.eyeL && bones.eyeR);
   report('pmxgaze ' + (gaze.hasBones ? 'eyeL+eyeR ok' : 'no-eye-bones disabled'));
   window.__xyDbg = { bones: bones, boneHome: boneHome, bm: bm, gaze: gaze,
-                     animateBones: animateBones };  // 诊断钩子
+                     animateBones: animateBones, cam: camera, rigRoot: rig };  // 诊断钩子
   // 分批上报骨骼名与匹配结果
   const found = Object.keys(bones).join(',');
   report('pmxbones found=' + found);
@@ -1029,16 +1349,357 @@ function loadModel(modelUrl, resPath) {
   report('pmxsway ' + swayGroups.map(g => g.base + ':' + g.chains.length).join(' ')
          + ' fingers=' + fingerBones.length);
 
-  // ---- 表情（morph）：列出模型自带的全部表情名，便于确认该驱动哪个 ----
-  morphMesh = mesh;
-  const dict = mesh.morphTargetDictionary || {};
-  const mkeys = Object.keys(dict);
-  report('pmxmorph count=' + mkeys.length);
+  // ---- 表情（morph）：收集**所有**带表情的网格 ----
+  /* PMX 按材质拆网格，脸/眼/口可能是独立 mesh。旧实现只认 MMDLoader 回调返回的那一个，
+     于是这些模型上"情绪写了但脸不动"。这里把全模型的 morph 网格收齐，之后按名字统一下发。 */
+  const mlist = collectMorphMeshes(mesh);
+  /* 材质型表情（照れ 这类改材质的）单独接管：MMDLoader 不执行它们 */
+  const mmat = captureMatMorphs(mesh);
+  report('pmxmatmorph mats=' + mmat.mats + ' morphs=' + mmat.morphs +
+         ' els=' + (mmat.els || 0) +
+         ' names=' + MAT_NAMES.slice(0, 8).join('/'));
+  const mAllNames = [];
+  for (const m of mlist) {
+    for (const k in m.dict) if (mAllNames.indexOf(k) < 0) mAllNames.push(k);
+  }
+  /* 材质型表情也并入候选池（它们通常本来就在字典里，这里只是兜底） */
+  for (const k of MAT_NAMES) if (mAllNames.indexOf(k) < 0) mAllNames.push(k);
+  const mkeys = mAllNames;
+  report('pmxmorph meshes=' + mlist.length + ' count=' + mkeys.length +
+         ' per=' + mlist.map(m => Object.keys(m.dict).length).join('/'));
   for (let i = 0; i < mkeys.length; i += 25) {
     report('pmxmorphname ' + i + ' ' + mkeys.slice(i, i + 25).join('|'));
   }
-  // 按关键词自动挑出"眨眼"和"微笑"
+  // 眨眼 / 口型 / 一次性表情按关键词解析；情绪槽位与常驻微笑要等实测配置
   pickMorphs(mkeys);
+  applySlotConfig(mkeys);
+
+  /* ---- 诊断口（无头验证 / 换模型排查用，只读） ----
+     morphs    : 该模型自带的全部表情名（判断某个模型缺哪类表情）
+     morphAll  : 当前真正在生效的表情权重（>0.005 才列）
+     shot      : 彩色截图（renderer 建时带了 preserveDrawingBuffer，直接 toDataURL）
+     headScreen: 头骨投影到画面像素，出特写图时用来定位裁剪框 */
+  if (window.__xyDbg) {
+    window.__xyDbg.morphs = function () { return mkeys.slice(); };
+    /* 每个带表情的网格一行（排查"表情只生效在一半身体上"时看它） */
+    window.__xyDbg.meshes = function () {
+      return morphMeshes.map((m) => ({
+        n: m.mesh.name || '(unnamed)',
+        morphs: Object.keys(m.dict).length,
+        mat: (m.mesh.material && m.mesh.material.name) || '',
+      }));
+    };
+    window.__xyDbg.morphAll = function () {
+      const o = {};
+      for (const k of mkeys) {
+        const v = mget(k);
+        if (v > 0.005) o[k] = +v.toFixed(3);
+      }
+      return o;
+    };
+    /* 单表情直写（跨网格）：标定与排障用，不受情绪合成器影响（渲染前最后一层 override 才用它） */
+    window.__xyDbg.morphSet = function (name, w) { mset(name, w); return mget(name); };
+    /* 表情目标内省：某个表情名在各网格上的索引 / 当前权重 / 顶点增量是否真有内容。
+       ★ 口径注意：MMDLoader 的 morph 属性存的是**绝对坐标**（先拷贝基准位置再加增量，
+         且 morphTargetsRelative=false），所以不能按"非零"判断 —— 必须与基准位置比。
+       排查"写了权重但画面不动"时先看这里：位移全 0 说明加载器没实现该类型
+       （PMX 的 bone / uv / 材质 morph 在 MMDLoader 里全是 TODO）。 */
+    window.__xyDbg.morphInfo = function (name) {
+      const out = [];
+      for (const m of morphMeshes) {
+        const i = m.dict[name];
+        if (i === undefined) continue;
+        const g = m.mesh.geometry;
+        const attr = g.morphAttributes && g.morphAttributes.position && g.morphAttributes.position[i];
+        const base = g.attributes && g.attributes.position;
+        let sum = 0, nz = 0, maxd = 0;
+        if (attr && attr.array && base && base.array) {
+          const a = attr.array, b = base.array;
+          const n = Math.min(a.length, b.length);
+          for (let k = 0; k + 2 < n; k += 3) {
+            const dx = a[k] - b[k], dy = a[k + 1] - b[k + 1], dz = a[k + 2] - b[k + 2];
+            const d = Math.abs(dx) + Math.abs(dy) + Math.abs(dz);
+            if (d > 1e-5) { nz++; sum += d; if (d > maxd) maxd = d; }
+          }
+        }
+        out.push({ mesh: m.mesh.name || '?', idx: i, inf: +(m.inf[i] || 0).toFixed(3),
+                   verts: base ? base.count : 0, moved: nz,
+                   sum: +sum.toFixed(3), max: +maxd.toFixed(4) });
+      }
+      if (!out.length && MAT_MORPHS[name]) {
+        out.push({ matMorph: true, mats: MAT_MORPHS[name].map((e) => e.mi),
+                   d: MAT_MORPHS[name].map((e) => (e.d || []).slice(0, 3)) });
+      }
+      return out;
+    };
+    window.__xyDbg.matMorphs = function () {
+      return { names: MAT_NAMES.slice(), detail: JSON.parse(JSON.stringify(MAT_MORPHS)) };
+    };
+    /* 直接拿网格/材质对象（排查渲染属性用，只读引用，改属性自行负责） */
+    window.__xyDbg.meshList = function () {
+      return morphMeshes.map(function (m) { return m.mesh; });
+    };
+    /* 直接摆一组材质权重（含伪表情 __tint），排障/出对比图用 */
+    window.__xyDbg.applyWeights = function (w) { applyMatMorph(w || {}); return MAT_DIRTY.size; };
+    /* 某表情位移的顶点落在**哪个材质**上，以及那个材质的渲染属性。
+       用于"顶点明明动了但画面没变化"：多半是材质全透明 / 背面剔除 / visible=false。 */
+    window.__xyDbg.morphMaterials = function (name) {
+      const res = [];
+      for (const m of morphMeshes) {
+        const i = m.dict[name];
+        if (i === undefined) continue;
+        const g = m.mesh.geometry;
+        if (!g.morphAttributes.position || !g.morphAttributes.position[i]) continue;
+        const attr = g.morphAttributes.position[i], base = g.attributes.position;
+        const moved = new Set();
+        for (let k = 0; k + 2 < attr.array.length; k += 3) {
+          const d = Math.abs(attr.array[k] - base.array[k]) +
+                    Math.abs(attr.array[k + 1] - base.array[k + 1]) +
+                    Math.abs(attr.array[k + 2] - base.array[k + 2]);
+          if (d > 1e-5) moved.add((k / 3) | 0);
+        }
+        const idx = g.index ? g.index.array : null;
+        const groups = g.groups || [];
+        const mats = Array.isArray(m.mesh.material) ? m.mesh.material : [m.mesh.material];
+        const hit = {};
+        if (idx) {
+          for (const gr of groups) {
+            for (let f = gr.start; f < gr.start + gr.count; f++) {
+              if (moved.has(idx[f])) hit[gr.materialIndex] = (hit[gr.materialIndex] || 0) + 1;
+            }
+          }
+        }
+        res.push({
+          mesh: m.mesh.name || '?', moved: moved.size, hit,
+          mats: Object.keys(hit).map((mi) => {
+            const mm = mats[mi] || {};
+            return { mi: +mi, name: mm.name, opacity: mm.opacity, transparent: mm.transparent,
+                     side: mm.side, visible: mm.visible !== false, map: !!mm.map,
+                     color: (mm.color && mm.color.getHexString) ? mm.color.getHexString() : null };
+          }),
+        });
+      }
+      return res;
+    };
+    window.__xyDbg.shot = function () {
+      if (!rig) return null;
+      renderer.render(scene, camera);
+      return renderer.domElement.toDataURL('image/png');
+    };
+    /* 页内取像素（n×n 灰度）：标定"某个表情到底看不看得出来"用。
+       走 readPixels 而不是截图 —— 标定要跑上百次，PNG 编码纯属浪费。 */
+    window.__xyDbg.grab = function (n) {
+      n = n || 96;
+      if (!rig) return null;
+      renderer.render(scene, camera);
+      const gl = renderer.getContext();
+      const w = gl.drawingBufferWidth, h = gl.drawingBufferHeight;
+      const buf = new Uint8Array(w * h * 4);
+      gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, buf);
+      const out = new Array(n * n);
+      for (let y = 0; y < n; y++) {
+        for (let x = 0; x < n; x++) {
+          const sx = Math.floor(x * w / n), sy = Math.floor((n - 1 - y) * h / n);
+          const i = (sy * w + sx) * 4;
+          out[y * n + x] = (buf[i] * 0.3 + buf[i + 1] * 0.59 + buf[i + 2] * 0.11) | 0;
+        }
+      }
+      return out;
+    };
+    /* 固定时钟取帧：把待机动作（呼吸/扫视/眨眼/扭腰）钉在同一个 t 上再采样。
+       标定表情强度必须用它 —— 用实时 grab 的话，两次取帧之间人物自己在动，
+       差值全是动作噪声（实测噪声 12，与表情信号同量级，根本分不出来）。
+       ★ 采样走 toDataURL → 2D canvas，不用 readPixels：无头下 render 后立刻
+         readPixels 读到的是上一帧（两次调用差值为 0，看上去"完全静止"，其实是
+         根本没读到刚画的东西）。截图这条路已经验证可靠。 */
+    window.__xyDbg.grabAt = async function (n, t) {
+      n = n || 96;
+      if (!rig) return null;
+      if (t !== undefined) window.__xyFreezeT = t;
+      /* ★ 不自己 render：画面归渲染循环画。上一版在这里手动 render 再读，
+         在无头下读到的是旧帧（两次调用差值恒为 0，看着像"完全静止"），
+         而且和循环抢缓冲。这里只负责等循环画完再采样。 */
+      await new Promise((res) => {
+        let done = false;
+        const fin = () => { if (!done) { done = true; res(); } };
+        requestAnimationFrame(() => requestAnimationFrame(fin));
+        setTimeout(fin, 350);            // headless 下 rAF 可能被节流，兜底
+      });
+      const img = new Image();
+      await new Promise((res, rej) => {
+        img.onload = res; img.onerror = rej;
+        img.src = renderer.domElement.toDataURL('image/png');
+      });
+      /* 只采头部：脸在整幅画面里只占几个百分点，全画面平均会把表情差异稀释到
+         看不见（实测「にこり」整幅 diff 0.003，看着像"没生效"）。 */
+      const gl = renderer.getContext();
+      const gw = gl.drawingBufferWidth, gh = gl.drawingBufferHeight;
+      let bx = 0, by = 0, bw = gw, bh = gh;
+      const hb = bones.head;
+      if (hb) {
+        const v = new THREE.Vector3();
+        hb.getWorldPosition(v); v.project(camera);
+        const hx = (v.x * 0.5 + 0.5) * gw, hy = (-v.y * 0.5 + 0.5) * gh;
+        bw = Math.round(gw * 0.42); bh = bw;
+        bx = Math.max(0, Math.min(gw - bw, hx - bw / 2));
+        by = Math.max(0, Math.min(gh - bh, hy - bh * 0.62));  // 头骨在脖子顶，脸在其上方
+      }
+      const kx = img.naturalWidth / gw, ky = img.naturalHeight / gh;
+      const cv = document.createElement('canvas');
+      cv.width = n; cv.height = n;
+      const cx = cv.getContext('2d', { willReadFrequently: true });
+      cx.drawImage(img, bx * kx, by * ky, bw * kx, bh * ky, 0, 0, n, n);
+      const d = cx.getImageData(0, 0, n, n).data;
+      const out = new Array(n * n);
+      for (let i = 0; i < n * n; i++) {
+        out[i] = (d[i * 4] * 0.3 + d[i * 4 + 1] * 0.59 + d[i * 4 + 2] * 0.11) | 0;
+      }
+      return out;
+    };
+    window.__xyDbg.headScreen = function () {
+      const b = bones.head;
+      if (!b) return null;
+      const v = new THREE.Vector3();
+      b.getWorldPosition(v);
+      v.project(camera);
+      const gl = renderer.getContext();
+      const w = gl.drawingBufferWidth, h = gl.drawingBufferHeight;
+      return { x: +((v.x * 0.5 + 0.5) * w).toFixed(1),
+               y: +((-v.y * 0.5 + 0.5) * h).toFixed(1), w: w, h: h };
+    };
+    /* 头部 RGB 采样（标定/体检用）：只截脸周围一小块，返回三通道像素。
+       ★ 为什么不用灰度：脸红（照れ）主要是**色相**变化，灰度差几乎为零 ——
+         用灰度标定时「照れ」会被判成"没效果"，这是必须走 RGB 的原因。
+       ★ 为什么框要小：整幅平均会把脸部的差异稀释掉（实测同一个表情整幅 diff 0.003，
+         看着像"没生效"）；0.22 倍画布宽 ≈ 1.6 倍头宽，只留脸和一点脖子。 */
+    window.__xyDbg.grabHead = async function (n, t, frac) {
+      n = n || 96;
+      frac = frac === undefined ? 0.22 : frac;
+      if (!rig) return null;
+      if (t !== undefined) window.__xyFreezeT = t;
+      await new Promise((res) => {
+        let done = false;
+        const fin = () => { if (!done) { done = true; res(); } };
+        requestAnimationFrame(() => requestAnimationFrame(fin));
+        setTimeout(fin, 350);
+      });
+      const img = new Image();
+      await new Promise((res, rej) => {
+        img.onload = res; img.onerror = rej;
+        img.src = renderer.domElement.toDataURL('image/png');
+      });
+      const gl = renderer.getContext();
+      const gw = gl.drawingBufferWidth, gh = gl.drawingBufferHeight;
+      let bx = 0, by = 0, bw = gw, bh = gw;
+      const hb = bones.head;
+      if (hb) {
+        const v = new THREE.Vector3();
+        hb.getWorldPosition(v); v.project(camera);
+        const hx = (v.x * 0.5 + 0.5) * gw, hy = (-v.y * 0.5 + 0.5) * gh;
+        bw = Math.round(gw * frac); bh = bw;
+        bx = Math.max(0, Math.min(gw - bw, hx - bw / 2));
+        by = Math.max(0, Math.min(gh - bh, hy - bh * 0.62));
+      }
+      const kx = img.naturalWidth / gw, ky = img.naturalHeight / gh;
+      const cv = document.createElement('canvas');
+      cv.width = n; cv.height = n;
+      const cx = cv.getContext('2d', { willReadFrequently: true });
+      cx.drawImage(img, bx * kx, by * ky, bw * kx, bh * ky, 0, 0, n, n);
+      const d = cx.getImageData(0, 0, n, n).data;
+      const px = new Array(n * n * 3);
+      for (let i = 0; i < n * n; i++) {
+        px[i * 3] = d[i * 4]; px[i * 3 + 1] = d[i * 4 + 1]; px[i * 3 + 2] = d[i * 4 + 2];
+      }
+      return { box: [bx, by, bw, bh], n: n, px: px };
+    };
+    /* ===== 同步比对（标定用，唯一可靠的口径） =====
+       把「清空所有表情 → 摆上待测表情 → render → readPixels → 算差」全部放在**同一个
+       同步任务**里完成。这样不依赖渲染循环是否在跑、也不给任何东西插进两帧之间：
+       之前所有"读数全都一样 / 两次跑差一个数量级"的问题，根子都是采样跨了几个异步任务。
+       返回 score = 脸部小框里 RGB 平均差 >10 级的像素占比（%），vec = 16×16 分块差值
+       （判"笑是不是闭眼"用余弦相似度）。 */
+    function _morphArrays() { return morphMeshes; }
+
+    function _rawFace(morphs, n, frac) {
+      if (!morphMeshes.length && !MAT_NAMES.length) return null;
+      /* 1) 清零：morphTargetInfluences 是持久数组，不清零会带着上一次的残留 */
+      for (const m of _morphArrays()) {
+        const inf = m.inf;
+        for (let i = 0; i < inf.length; i++) inf[i] = 0;
+      }
+      /* 2) 摆上待测表情 */
+      if (morphs) for (const nm in morphs) mset(nm, morphs[nm]);
+      /* 2b) 材质型表情（照れ 等）没有顶点增量，必须单独摆一次 —— 否则标定
+             永远测到 0%，会被误判成"这个模型没有脸红表情" */
+      applyMatMorph(morphs || {});
+      /* 3) 立即渲染并读回 */
+      renderer.render(scene, camera);
+      const gl = renderer.getContext();
+      const w = gl.drawingBufferWidth, h = gl.drawingBufferHeight;
+      const buf = new Uint8Array(w * h * 4);
+      gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, buf);
+      /* 4) 头部小框（头骨投影，脸在头骨上方） */
+      let bx = 0, by = 0, bw = w, bh = w;
+      const hb = bones.head;
+      if (hb) {
+        const v = new THREE.Vector3();
+        hb.getWorldPosition(v); v.project(camera);
+        const hx = (v.x * 0.5 + 0.5) * w, hy = (-v.y * 0.5 + 0.5) * h;
+        bw = Math.round(w * frac); bh = bw;
+        bx = Math.max(0, Math.min(w - bw, Math.round(hx - bw / 2)));
+        by = Math.max(0, Math.min(h - bh, Math.round(hy - bh * 0.62)));
+      }
+      const out = new Uint8Array(n * n * 3);
+      for (let yy = 0; yy < n; yy++) {
+        for (let xx = 0; xx < n; xx++) {
+          const sx = Math.min(w - 1, bx + Math.floor(xx * bw / n));
+          const syTop = Math.min(h - 1, by + Math.floor(yy * bh / n));
+          const sy = h - 1 - syTop;              // readPixels 原点在左下
+          const i = (sy * w + sx) * 4, o = (yy * n + xx) * 3;
+          out[o] = buf[i]; out[o + 1] = buf[i + 1]; out[o + 2] = buf[i + 2];
+        }
+      }
+      return { n: n, px: out, box: [bx, by, bw, bh] };
+    }
+
+    window.__xyDbg.measureDiff = function (a, b, n, frac) {
+      n = n || 96; frac = frac === undefined ? 0.22 : frac;
+      const A = _rawFace(a, n, frac), B = _rawFace(b, n, frac);
+      if (!A || !B) return null;
+      const BS = 16;
+      const blocks = new Array(BS * BS).fill(0), cnt = new Array(BS * BS).fill(0);
+      let hit = 0, sum = 0;
+      for (let y = 0; y < n; y++) {
+        for (let x = 0; x < n; x++) {
+          const i = (y * n + x) * 3;
+          const d = (Math.abs(A.px[i] - B.px[i]) + Math.abs(A.px[i + 1] - B.px[i + 1])
+                   + Math.abs(A.px[i + 2] - B.px[i + 2])) / 3;
+          if (d > 10) hit++;
+          sum += d;
+          const bi = Math.min(BS - 1, (y * BS / n) | 0) * BS + Math.min(BS - 1, (x * BS / n) | 0);
+          blocks[bi] += d; cnt[bi]++;
+        }
+      }
+      const vec = blocks.map((v, i) => +(v / (cnt[i] || 1)).toFixed(2));
+      return { score: +(100 * hit / (n * n)).toFixed(2),
+               mag: +(sum / (n * n)).toFixed(2), vec: vec, box: A.box };
+    };
+
+    /* 情绪状态 / 手动设置（无头验收用；也方便现场试某个标签像不像） */
+    window.__xyDbg.emo = function () {
+      return { label: EmoPmx.label, intensity: EmoPmx.intensity, req: EmoPmx.req,
+               src: EmoPmx.src, alive: EmoPmx.alive(),
+               cur: Object.assign({}, EmoPmx.cur), pose: Object.assign({}, EmoPmx.pose),
+               slots: Object.assign({}, emoSlots) };
+    };
+    /* 配方表（标定工具据此算"某个标签在画面上占了多大面积"，避免两边各写一份） */
+    window.__xyDbg.recipe = function () { return JSON.parse(JSON.stringify(EMO_RECIPE)); };
+    window.__xyDbg.emoSet = function (label, inten) {
+      EmoPmx.set(label, inten === undefined ? 0.8 : inten, null, 'dbg');
+      EmoPmx.holdUntil = Infinity;
+    };
+    window.__xyDbg.emoClear = function () { EmoPmx.clear(); };
+  }
 
   /* 动作库接管：记录全骨骼初始姿态（退出 VMD 时精确复位），
      并记住 センター 的原位（跳舞时锁死水平位移，只留上下起伏）。 */
@@ -1237,6 +1898,9 @@ window.__xyPose = {
 let danceMesh = null, mixer = null, danceAction = null;
 let danceKey = 'idle', danceOn = false, danceLoading = '';
 let danceMap = {}, danceList = [];
+/* one-shot（语音"跳个舞"）：播完自动回待机，不动 current.txt 的持久选择。
+   oneshotSeq 记的是"已处理到哪一次请求"，同一支舞连说两次靠 seq 才认得出是新请求。 */
+let oneshotKey = '', oneshotSeq = -1, oneshotPlaying = false;
 let boneSnap = null, danceRoot = null;
 let motionCam = null;           // 动作专用机位 {dist, cy}（骨骼包围盒算出来的，整段动作固定）
 const homeRoot = new Map();     // 根位移骨骼（全ての親/センター/足ＩＫ）的原位缓存
@@ -1273,6 +1937,7 @@ function stopDance(silent) {
     try { mixer.stopAllAction(); if (danceMesh) mixer.uncacheRoot(danceMesh); } catch (e) {}
   }
   mixer = null; danceAction = null; danceOn = false; danceKey = 'idle'; danceLoading = '';
+  oneshotPlaying = false;
   danceGround.off = 0;
   motionCam = null;          // 退出动作：丢掉动作机位，回到待机取景
   homeRoot.clear();          // 根骨骼原位缓存随动作一起清（换模型/换动作都要重记）
@@ -1281,10 +1946,12 @@ function stopDance(silent) {
   if (!silent) report('motionstop');
 }
 
-function playDance(key) {
+function playDance(key, oneShot) {
   if (!danceMesh || !danceMap[key]) return;
-  if (danceOn && danceKey === key) return;
-  if (danceLoading === key) return;
+  /* 同一支舞重复请求：持久模式下"已经在这支舞上"就直接返回（避免无谓重载）；
+     一次性模式下必须重播（用户说"再跳一次"就是再跳一次）。 */
+  if (danceOn && danceKey === key && !oneShot) return;
+  if (danceLoading === key && !oneShot) return;
   danceLoading = key;
   report('motionload ' + key + ' ' + danceMap[key].url);
   loader.loadAnimation(danceMap[key].url, danceMesh, function (clip) {
@@ -1317,10 +1984,15 @@ function playDance(key) {
     danceHelper.add(danceMesh, { animation: clip, physics: false });
     mixer = danceHelper.objects.get(danceMesh).mixer;   // helper 的内部 mixer（IK/grant 由它带跑）
     danceAction = mixer.clipAction(clip);
-    danceAction.setLoop(THREE.LoopRepeat, Infinity);
-    danceAction.clampWhenFinished = false;
+    /* 一次性动作播一遍就停（LoopOnce + clamp 停末帧），持久动作循环跳。
+       停末帧而不是让它回到第 0 帧，是为了播完后画面不"跳"一下；
+       回待机由 loop 里的 oneshot 结束判定负责（stopDance 复位骨骼）。 */
+    danceAction.setLoop(oneShot ? THREE.LoopOnce : THREE.LoopRepeat,
+                        oneShot ? 1 : Infinity);
+    danceAction.clampWhenFinished = !!oneShot;
     danceAction.reset().play();
     danceOn = true; danceKey = key;
+    oneshotPlaying = !!oneShot;
     danceClock.getDelta();
     report('motionplay ' + key + ' dur=' + clip.duration.toFixed(2)
            + ' tracks=' + clip.tracks.length);
@@ -1485,6 +2157,19 @@ async function syncMotion() {
     danceList = j.motions || [];
     danceMap = {};
     for (const m of danceList) danceMap[m.key] = m;
+
+    /* ★ one-shot 优先：语音说"跳个舞"只该跳一遍。
+       判据是 seq 变了（同一支舞连说两次 key 不变，只靠 key 会漏掉第二次）。 */
+    const os = j.oneshot || '';
+    const osSeq = (j.oneshot_seq === undefined ? -1 : j.oneshot_seq);
+    if (os && osSeq !== oneshotSeq && danceMap[os]) {
+      oneshotSeq = osSeq;
+      oneshotKey = os;
+      playDance(os, true);
+      return;      // 本轮不再按持久选择走，否则会立刻被 current 覆盖回持久动作
+    }
+    if (!os) oneshotKey = '';
+
     const want = j.current || 'idle';
     if (want === 'idle') { if (danceOn || danceKey !== 'idle') stopDance(); }
     else playDance(want);
@@ -1493,6 +2178,26 @@ async function syncMotion() {
   }
 }
 setInterval(syncMotion, 2000);
+
+/* 一次性动作播完 -> 回待机 + 回报后端。
+   判定放渲染循环里（不在 syncMotion）：2 秒轮询会把结束时刻延迟到 2 秒后，
+   舞蹈停末帧干站着很难看。这里每帧看一次 action.time 是否到了片长。 */
+function tickOneshot() {
+  if (!oneshotPlaying || !danceAction) return;
+  const clip = danceAction.getClip && danceAction.getClip();
+  if (!clip) return;
+  if (danceAction.time < clip.duration - 0.02) return;
+  const doneKey = oneshotKey;
+  oneshotPlaying = false;
+  oneshotKey = '';
+  stopDance(true);
+  report('oneshotdone ' + doneKey);
+  fetch('/api/motion_done', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ key: doneKey }),
+  }).catch(function () {});
+}
 
 /* ===================== 待机动作 =====================
    原则：整身绝不漂移、不像幽灵；动作都在局部关节上做小幅度。
@@ -1740,10 +2445,10 @@ function pokeCurve(dt, rise, tau, over) {
 /* 表情组内最大权重。<0 / 空组返回 null，测试才能区分"模型没这个表情"与"权重为 0"。
    （用户实测反馈"没有表情变化"的直接原因：旧版只驱动 びっくり 一个表情，
     它只动 422 个顶点、平均位移 0.020，是眨眼表情的 1/8 —— 拉满也看不出来。） */
-function faceMax(inf, grp) {
-  if (!inf || !grp.length) return null;
+function faceMax(grp) {
+  if (!grp || !grp.length) return null;
   let m = 0;
-  for (const e of grp) if (inf[e[0]] > m) m = inf[e[0]];
+  for (const e of grp) { const v = mget(e[0]); if (v > m) m = v; }
   return +m.toFixed(3);
 }
 
@@ -1893,28 +2598,27 @@ const poke = {
      ★ 静态预览存在的理由：表情"有没有效果"只能靠眼睛判断，而瞬时动画在无头截图里
        很难卡在峰值上（SwiftShader 下 CDP 往返就有几十毫秒抖动）。 */
   _face: function (emo, grp) {
-    const inf = morphMesh && morphMesh.morphTargetInfluences;
-    if (!inf) return;
+    if (!morphMeshes.length) return;
     const on = pokeFace[grp] || [];
     const off = pokeFace[grp === 'annoyed' ? 'surprise' : 'annoyed'] || [];
-    for (const e of off) inf[e[0]] = 0;
+    for (const e of off) mset(e[0], 0);
     let peak = 0;
     for (const e of on) {
       const v = Math.min(1, emo * e[1] * 1.15);
-      inf[e[0]] = v;
+      mset(e[0], v);
       if (v > peak) peak = v;
     }
     /* 说话时元音让位：受惊张嘴的那半秒不该还在念字（applyFace 刚写完，这里按比例压） */
     if (emo > 0.01) {
       for (const v of mVowels) {
-        if (v >= 0) inf[v] *= (1 - 0.85 * Math.min(1, emo));
+        if (v) mset(v, mget(v) * (1 - 0.85 * Math.min(1, emo)));
       }
     }
-    if (emo > 0 && mSmile >= 0) {
+    if (emo > 0 && mSmileName) {
       /* 用 min 封顶而不是相乘：动作分支里 applyFace 不写笑肌（交给 VMD），
          乘法会在几帧内累积把动作自己的表情压死，且 poke 结束后也回不来。 */
       const cap = POKE_SMILE + (1 - POKE_SMILE) * (1 - emo);
-      if (inf[mSmile] > cap) inf[mSmile] = cap;
+      if (mget(mSmileName) > cap) mset(mSmileName, cap);
     }
     if (this.lastInj) {
       this.lastInj.face = +peak.toFixed(3);
@@ -1956,7 +2660,6 @@ const poke = {
     state: function () {
       const cfg = poke.cfg();
       const dt = (performance.now() - t0) / 1000 - poke.t0;
-      const inf = morphMesh && morphMesh.morphTargetInfluences;
       const sc = rig ? rig.scale : null;
       const nb = bones.neck, hb = bones.head;
       return { seq: poke.seq, active: poke.active, annoyed: poke.annoyed,
@@ -1983,17 +2686,14 @@ const poke = {
                inj: poke.lastInj,
                peak: poke.peak,
                /* 表情：surW / jitW 取组内最大权重（0 = 组内表情没被驱动） */
-               surW: faceMax(inf, pokeFace.surprise),
-               jitW: faceMax(inf, pokeFace.annoyed),
+               surW: faceMax(pokeFace.surprise),
+               jitW: faceMax(pokeFace.annoyed),
                faceN: [pokeFace.surprise.length, pokeFace.annoyed.length] };
     },
     names: function () {
-      const d = (morphMesh && morphMesh.morphTargetDictionary) || {};
-      const inv = {};
-      for (const k in d) inv[d[k]] = k;
-      const nm = (grp) => grp.map(e => (inv[e[0]] || '?') + ':' + e[1]).join(',');
+      const nm = (grp) => grp.map(e => e[0] + ':' + e[1]).join(',');
       return { sur: nm(pokeFace.surprise), jit: nm(pokeFace.annoyed),
-               count: Object.keys(d).length };
+               count: morphMeshes.length };
     },
   },
 };
@@ -2019,7 +2719,7 @@ const activity = {
   lastSignal: 'none',          // 最近一次的反应类型（调试看）
 
   fire: function (grp) {
-    if (!morphMesh || poke.active) return;
+    if (!morphMeshes.length || poke.active) return;
     if (!activityFace[grp] || !activityFace[grp].length) return;
     this.grp = grp; this.active = true;
     /* 与 loop 的 t 同基准：t = (performance.now() - 页面t0)/1000（poke 同口径） */
@@ -2044,18 +2744,17 @@ const activity = {
 
   /* 只写表情不碰骨骼（同 poke._face 的定位）；清零时两组都清，防残留 */
   _face: function (emo, grp) {
-    const inf = morphMesh && morphMesh.morphTargetInfluences;
-    if (!inf) return;
+    if (!morphMeshes.length) return;
     for (const g in activityFace) {
       if (g === grp && emo > 0) continue;
-      for (const e of activityFace[g]) inf[e[0]] = 0;
+      for (const e of activityFace[g]) mset(e[0], 0);
     }
     for (const e of (activityFace[grp] || [])) {
-      inf[e[0]] = Math.min(1, emo * e[1]);
+      mset(e[0], Math.min(1, emo * e[1]));
     }
     if (emo > 0.01) {          // 说话口型让位（受惊张嘴那半秒不该还在念字）
       for (const v of mVowels) {
-        if (v >= 0) inf[v] *= (1 - 0.85 * Math.min(1, emo));
+        if (v) mset(v, mget(v) * (1 - 0.85 * Math.min(1, emo)));
       }
     }
   },
@@ -2231,35 +2930,195 @@ function animateBones(t) {
    full=false = VMD 动作模式：微笑等表情交给动作自带的 morph 轨道，
                 这里只保证眨眼与"说话时嘴要动"，否则要么面瘫、要么嘴不动。 */
 function applyFace(t, full) {
-  if (!morphMesh || !morphMesh.morphTargetInfluences) return;
-  const inf = morphMesh.morphTargetInfluences;
-  if (full && mSmile >= 0) {
-    inf[mSmile] = SMILE_BASE + Math.sin(t * 0.5) * 0.10;
+  if (!morphMeshes.length) return;
+  /* 常驻微笑：__xyCalibNoIdle 供标定用 —— 关掉它才有"中性脸"可对比，
+     否则 smile 槽位本身已经被常驻笑占着，测出来的差值永远是 0。 */
+  if (full && mSmileName && !window.__xyCalibNoIdle) {
+    mset(mSmileName, SMILE_BASE + Math.sin(t * 0.5) * 0.10);
   }
-  if (mBlink >= 0) {
+  if (mBlinkName) {
     const cyc = t % BLINK_EVERY;
-    inf[mBlink] = (cyc < 0.13) ? (1 - cyc / 0.13) : 0;
+    mset(mBlinkName, (cyc < 0.13) ? (1 - cyc / 0.13) : 0);
   }
-  if (full && mWink >= 0) inf[mWink] = 0;
+  if (full && mWinkName) mset(mWinkName, 0);
 
   /* ---- 口型：五元音权重 -> あいうえお ----
      引擎已经做过时间对齐、交叉淡化和音量门控，这里只做放大与钳制。
      window.__xyMouthOverride 仅供调试：写 {a,i,u,e,o} 可手动摆口型（不发语音也能验） */
   const mo = window.__xyMouthOverride;
-  if (mo || (window.__xyLip && mVowels[0] >= 0)) {
+  if (mo || (window.__xyLip && mVowels[0])) {
     const w = mo || window.__xyLip.weights;
     const arr = [w.a, w.i, w.u, w.e, w.o];
     for (let vi = 0; vi < 5; vi++) {
-      if (mVowels[vi] >= 0) {
-        inf[mVowels[vi]] = Math.min(1, arr[vi] * MOUTH_GAIN[vi]);
+      if (mVowels[vi]) mset(mVowels[vi], Math.min(1, arr[vi] * MOUTH_GAIN[vi]));
+    }
+  }
+}
+
+/* 单表情调试口（与 __xyMouthOverride / __xyTwist 同一惯例）：
+   写 {表情名: 权重} 可强行摆某个 morph，用来确认某个日文表情实际是什么效果
+   （「笑い」在有些模型上是闭眼笑、在另一些上是睁眼笑，光看名字判断不了）。
+   ★ 必须放在渲染前**最后一层**（loop 里 applyEmoPose 之后）：情绪合成器每帧都会把
+     槽位表情写回 0，放在 applyFace 里会被它覆盖掉 —— 标定时表现为"设了没反应"。 */
+function applyMorphOverride() {
+  const ov = window.__xyMorphOverride;
+  if (!ov) return;
+  for (const nm in ov) mset(nm, +ov[nm] || 0);
+}
+
+/* ---------------- 情绪合成器（MMD 版） ----------------
+   唯一的表情/姿态写者，与 VRM 页的 Face 同构：
+   配方 × 强度 → 说话让位 ×0.8 → 指数平滑（升快落慢）→ 写 morph + 骨骼增量。
+   ★ 调用点必须排在 poke.tick / activity.tick **之后**：那两个是一次性效果，
+     退出时会把 morph 权重写回 0，先写情绪会被它们抹掉（VRM 页踩过同一个坑）。 */
+const EMO_TAU_UP = 0.18, EMO_TAU_DOWN = 0.55, EMO_HOLD = 3.0;
+const DEG_R = Math.PI / 180;
+let wasDancing = false;         // 舞蹈状态边沿：用于"刚进舞蹈时清一次情绪残影"
+const EmoPmx = {
+  label: null, intensity: 0, req: -1, src: '', holdUntil: -1,
+  cur: {}, pose: { headX: 0, headZ: 0, gazeYaw: 0, gazePitch: 0, breath: 1 },
+
+  now: function () { return (performance.now() - t0) / 1000; },
+
+  /* req 是后端的判定序号：小于当前的丢弃（旧判定不许盖新判定）；
+     等于当前的直接忽略 —— /api/last 是 400ms 轮询，同一条 emo 会重复推几十次，
+     不过滤就会把 holdUntil 一路续期，情绪永远不回落。 */
+  set: function (label, intensity, req, src) {
+    if (typeof req === 'number') {
+      if (req === this.req) return;           // 同一条判定被 400ms 轮询重复推
+      if (req < this.req) {
+        /* 后端重启后 req 从 0 重新数，不比它小就会被永久挡住（情绪从此不再更新）。
+           差值 > 3 判为重启，重置水位；小幅回退（乱序）仍然丢弃。 */
+        if (this.req - req > 3) this.req = -1; else return;
+      }
+      this.req = req;
+    }
+    this.label = (label && EMO_RECIPE[label]) ? label : null;
+    this.intensity = Math.max(0, Math.min(1, +intensity || 0));
+    this.src = src || '';
+    this.holdUntil = this.now() + EMO_HOLD;
+  },
+
+  clear: function () {
+    this.label = null; this.intensity = 0; this.req = -1; this.holdUntil = -1;
+  },
+
+  alive: function () { return !!this.label && this.now() <= this.holdUntil; },
+
+  /* suppress=true（舞蹈中）：目标直接归 0，让 cur 衰减干净。
+     舞蹈的表情归 VMD 轨道，情绪不插手；但也不能停写——停写就没人把这些 morph 清零了。 */
+  tick: function (dt, suppress) {
+    if (window.xiaoyunSpeaking && this.label) {        // 说话期间续期：情绪跟着这句话说完
+      this.holdUntil = Math.max(this.holdUntil, this.now() + 0.5);
+    }
+    const on = !suppress && this.alive();
+    const rec = on ? EMO_RECIPE[this.label] : null;
+    const inten = on ? this.intensity : 0;
+    const sp = (window.xiaoyunSpeaking && on) ? 0.8 : 1;
+
+    for (const s in emoSlots) {
+      let tgt = 0;
+      if (rec && rec.expr[s] !== undefined) tgt = rec.expr[s] * inten * sp;
+      const cur = this.cur[s] || 0;
+      const tau = Math.abs(tgt - cur) > 1e-4 ? (tgt > cur ? EMO_TAU_UP : EMO_TAU_DOWN) : 0;
+      this.cur[s] = tau ? cur + (tgt - cur) * (1 - Math.exp(-dt / tau)) : tgt;
+    }
+    const tp = { headX: 0, headZ: 0, gazeYaw: 0, gazePitch: 0, breath: 1 };
+    if (rec && rec.pose) {
+      for (const k in tp) {
+        if (rec.pose[k] === undefined) continue;
+        /* breath 是**倍率**不是增量（1 = 原幅度），必须绕 1 插值：
+           直接 ×inten 会让 1.15 变成 0.92 —— 越强的"急促呼吸"反而更浅。 */
+        tp[k] = (k === 'breath') ? 1 + (rec.pose[k] - 1) * inten
+                                 : rec.pose[k] * inten;
       }
     }
+    for (const k in tp) {
+      const cur = this.pose[k], tgt = tp[k];
+      const far = Math.abs(tgt - cur) > 1e-3;
+      const tau = far ? (Math.abs(tgt) > Math.abs(cur) ? EMO_TAU_UP : EMO_TAU_DOWN) : 0;
+      this.pose[k] = tau ? cur + (tgt - cur) * (1 - Math.exp(-dt / tau)) : tgt;
+    }
+  },
+
+  /* 有效强度 0~1：判断"要不要压掉常驻微笑"，不能只看单一槽位 */
+  level: function () {
+    let m = 0;
+    for (const s in this.cur) m = Math.max(m, this.cur[s] || 0);
+    return Math.min(1, m / 0.6);
+  },
+};
+
+/* 情绪 → morph 权重。
+   ★ 必须**每帧把每个槽位都写一遍（包括写 0）**：MMD 的 morphTargetInfluences 是持久数组，
+     只有人写它才变。第一版只在权重 >0.01 时才写，结果情绪回落时那些 morph 停在旧值上，
+     换下一个标签就叠上一层 —— 实测 curious 那格同时挂着 怒り/困る/照れ/じと目 四个历史表情。
+   smile 槽位例外：常驻微笑（applyFace 每帧写）要保留，用 max 合并而不是覆盖。 */
+function applyEmoFace() {
+  if (!morphMeshes.length && !MAT_NAMES.length) return;
+  const cur = EmoPmx.cur;
+  const lv = Math.min(1, EmoPmx.level());
+  /* 常驻微笑（SMILE_BASE）的让位系数：生气/难过时必须把笑收掉，
+     否则就是"笑着生气"。mget 此刻读到的是 applyFace 本帧刚写的常驻值，
+     乘上这个系数就得到"该留多少笑"，再和情绪目标取 max。 */
+  const soft = 1 - 0.85 * lv;
+
+  /* 先算"这一帧每个表情名要多少"：同一表情被多个槽位用到时取最大，不做累加
+     （累加会轻易冲到 1 并顶死，看不出层次）。 */
+  const want = {};
+  for (const s in cur) {
+    const parts = emoSlots[s];
+    if (!parts || !parts.length) continue;
+    const base = Math.min(1, cur[s] || 0);
+    for (const p of parts) {
+      const w = Math.min(1, base * (p.w === undefined ? 1 : p.w));
+      if (w > (want[p.name] || 0)) want[p.name] = w;
+    }
+  }
+  /* __xyCalibNoIdle：标定要"中性脸"，此时常驻微笑也不许保留（否则 base 本身带着笑，
+     微笑槽位的差值被掩盖成"没效果"）。 */
+  const idleOn = !window.__xyCalibNoIdle;
+  const finalW = {};
+  for (const nm of emoSlotNames) {
+    let v;
+    if (nm === mSmileName && idleOn) v = Math.max(mget(nm) * soft, want[nm] || 0);
+    else v = want[nm] || 0;          // 每帧覆盖写：回落就是写 0
+    finalW[nm] = v;
+    mset(nm, v);
+  }
+  /* 材质型表情（照れ 等）走单独通道：顶点增量数组里没有它们，mset 写了也不动 */
+  applyMatMorph(finalW);
+}
+
+/* 情绪 → 姿态增量。animateBones / VMD 每帧写绝对值，这里在它们之后 +=，所以不累积。
+   呼吸只动胸腔旋转，绝不碰 rig.scale —— 那是 poke 挤压的专属通道。 */
+function applyEmoPose(t) {
+  const p = EmoPmx.pose;
+  const hd = bones.head, nk = bones.neck;
+  if (hd) { hd.rotation.x += p.headX * DEG_R; hd.rotation.z += p.headZ * DEG_R; }
+  if (nk) { nk.rotation.x += p.headX * DEG_R * 0.35; nk.rotation.z += p.headZ * DEG_R * 0.35; }
+
+  const gy = p.gazeYaw * DEG_R, gp = p.gazePitch * DEG_R;
+  if (Math.abs(gy) + Math.abs(gp) > 1e-4) {
+    for (const k of ['eyeL', 'eyeR']) {
+      const b = bones[k];
+      if (!b) continue;
+      b.rotation.y += gy * (k === 'eyeR' && EYE_YAW_MIRROR ? -1 : 1);
+      b.rotation.x += gp;
+    }
+  }
+  if (Math.abs(p.breath - 1) > 1e-3 && bones.spine) {
+    bones.spine.rotation.x += Math.sin(t * 1.4) * 0.010 * (p.breath - 1);
   }
 }
 
 (function loop(){
   requestAnimationFrame(loop);
-  const t = (performance.now() - t0) / 1000;
+  /* __xyFreezeT：把动画时钟钉死（标定/截图用）。设了它，呼吸/扫视/眨眼/扭腰
+     全部停在同一个相位上，画面才会"可比" —— 否则两帧之间的差值是动作不是表情。 */
+  let t = (performance.now() - t0) / 1000;
+  const ft = window.__xyFreezeT;
+  if (ft !== undefined && ft !== null) t = +ft;
   const dt = Math.min(0.1, (performance.now() - (loop._prev || performance.now())) / 1000);
   loop._prev = performance.now();
   if (rig && !fitting) {
@@ -2269,6 +3128,7 @@ function applyFace(t, full) {
       lockDanceRoot();
       clampDancePose();
       groundDance();
+      tickOneshot();                             // 一次性动作播完立刻回待机（不等 2s 轮询）
       applyFace(t, false);                   // 表情不接管：只保眨眼 + 说话口型
       applyGazeEyes();                       // 眼球追随光标（动作模式也必须叠，见函数注释）
       applyGazeHead();                       // 头部也跟着偏（在 VMD 轨道之上做增量，不再打折）
@@ -2285,6 +3145,20 @@ function applyFace(t, full) {
        放在这里两个动画分支（VMD / 待机）都能叠，且不会被上一步的归位抹掉。 */
     poke.tick(t);
     activity.tick(t);   // 活动反应：同 poke 的时序约束（applyFace 之后、render 之前）
+    /* 情绪排在所有一次性效果之后：poke/activity 退出时会把 morph 写回 0，
+       先写情绪会被抹掉。姿态是增量，眼骨在 applyGazeEyes 之后才轮到情绪覆盖。 */
+    const inDance = !!(danceOn && mixer);
+    EmoPmx.tick(dt, inDance);
+    if (!inDance) {
+      applyEmoFace();
+      applyEmoPose(t);
+    } else if (!wasDancing) {
+      /* 刚进舞蹈：清一次情绪残影，之后表情交给 VMD 轨道。
+         舞蹈期间不能每帧写（会把作者编排的表情硬压成 0），也不能不写（残影会跟着跳）。 */
+      applyEmoFace();
+    }
+    wasDancing = inDance;
+    applyMorphOverride();   // 调试口最后落笔：压过情绪与常驻微笑
     /* 动作期间用骨骼包围盒算出的固定机位（不跟帧、不追脸）；cx 补偿刀/武器的不对称挥舞 */
     if (danceOn && motionCam) {
       camera.position.set(motionCam.cx, motionCam.cy, motionCam.dist);
@@ -2775,6 +3649,12 @@ function applyFace(t, full) {
     polling = true;
     fetch('/api/last?since=' + seq).then(function(r){ return r.json(); })
       .then(function(j){
+        /* 情绪走独立通道：后端 /api/last 的 fresh 两个分支都带 emo，
+           所以表情不依赖台词/音频就绪 —— 可以做到"脸比嘴早"。
+           EmoPmx.set 内部按 req 去重，这里不用管 400ms 重复推送。 */
+        if (j && j.emo) {
+          EmoPmx.set(j.emo.label, j.emo.intensity, j.emo.req, j.emo.src);
+        }
         if (j && j.fresh && j.reply){
           seq = j.seq;
           xlog('收到新回复', 'seq=' + j.seq + (j.stream ? ' (流式)' : ''));
