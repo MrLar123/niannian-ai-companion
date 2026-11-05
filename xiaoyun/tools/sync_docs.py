@@ -56,8 +56,10 @@ JOBS += [
 ]
 
 # 仓库外还散着一份早期版 README_OR_PROXY.md（旧版 99% 内容已在仓库版中）。
-# 该路径位于 E 盘 Junction 下，ACL 只给 Everyone:(RX)，非提权进程写不进去也改不了 ACL，
-# 因此作为「尽力而为」的可选镜像：能写就同步，不能写只提示，绝不影响仓库内一致性判定。
+# 它曾因 E 盘 Junction 继承的 ACL 只给 Everyone:(RX) 而无法写入、也无法改 DACL；
+# 2026-11-05 用「备份 → 删除 → 以仓库版重建」让新文件重新可写，现已与仓库版一致。
+# 仍保留「尽力而为」语义：该文件在 git 仓库外，万一再次被系统策略改成只读，
+# 只提示不报错，绝不影响仓库内一致性判定。
 OPTIONAL_JOBS = [
     (os.path.join(REPO, "or_proxy", "README_OR_PROXY.md"),
      os.path.join(WORKSPACE, "README_OR_PROXY.md")),

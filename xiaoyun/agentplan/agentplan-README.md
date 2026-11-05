@@ -298,3 +298,23 @@ python agentplan.py chat -s "你是资深前端工程师" -m "React 18 的并发
 原文只点名「文本生成模型及向量化模型」——语音（TTS/ASR）不在禁用清单内，属套餐本意；而本 CLI 的 chat/embed/image 子命令（以及桌宠把对话/视觉接在 plan 端点上的用法）都落在「文本生成模型」的禁用范围里，**是直接违反条款，不只是灰色地带**。
 
 请仅在自有、合规的环境中使用本脚本，并自行承担相应风险。
+
+
+---
+
+<!-- round2-20261105 -->
+## 附：2026-11-05 状态补记（原文保留为工具文档）
+
+1. 本文描述的是**套餐档命令行客户端**，与主链路 `or_proxy.py` 并存：
+   主链路用普通方舟 Key 打 `/api/v3/*`，`agentplan.py` 用 Plan Key 打 `/api/plan/v3/*`
+   （`arkplan` 上游，无 Plan Key 时 or_proxy 会自动把它从路由优先级里摘掉）。
+   **两者不是同一条通道，Key 不能混用。**
+2. 语音端点另有一套域名与路径：TTS 走
+   `https://openspeech.bytedance.com/api/v3/plan/tts/unidirectional`（Plan Key），
+   与本文的 `/api/plan/v3/chat/completions` 不是一回事；文档里的
+   `/api/v3/tts/unidirectional`、`tts/create` 只认**豆包语音控制台 Key**。
+3. 已实测的补充结论：`audio_params.enable_subtitle=true` 可返回 `sentence.words[]` 字级时间戳
+   （放 `req_params` 静默无效）；`speech_rate` 1:1、`loudness_rate` 生效、
+   `post_process.pitch` 无效、无 `emotion` 字段；双向流式 TTS 发完 TaskRequest
+   必须立刻发 FinishSession(102)，否则永久静默。详见 `docs/调研报告/豆包语音端点全量探测报告.md`。
+4. 脚本本身只读环境变量、无明文 Key，可安全入仓；未设置 Key 时直接报错退出（exit 1）。

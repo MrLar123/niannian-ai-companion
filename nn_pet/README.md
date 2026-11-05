@@ -43,3 +43,18 @@ D:/LunaAI/project-nn/runtime/Miniconda3/python.exe nn_pet\server.py
 - 本包是核心对话链路（chat/last/history/health/preset/voice 时序）的
   class 化等价实现 + 单测；感知/记忆/托盘等外围按模块边界逐类迁移，
   原文件中 Catcher/MicButton/HotkeyThread 等本就是 class，可整类搬入。
+
+
+---
+
+<!-- round2-20261105 -->
+## 状态说明（2026-11-05）
+
+**本目录是 2026-10-24 的 class 封装重构试验分支，不是现行后端。**
+此后 10-25~11-05 的全部能力（情绪旁路 `emotion_rules.py`、31 形象 × 8 情绪表情标定、
+21 项音色与动态菜单、菜单两级分组、语音指令四类意图与反问闭环、三套凭证体系）
+都落在 `xiaoyun/xiaoyun_server.py`（现 5088 行 / 69 路由装饰器）上，**`nn_pet` 未同步**。
+
+- 上面的结构表与 32 项单元测试只描述该试验分支自身，保留供设计追溯；
+- 正式启动请双击 `xiaoyun\scripts\启动小芸桌面.bat`，不要运行 `nn_pet\nn_pet\server.py`；
+- 现行回归命令与实况数字见 `docs/00-文档索引与当前实况.md`，本期变更见 `docs/18-2026-11 变更纪要.md`。

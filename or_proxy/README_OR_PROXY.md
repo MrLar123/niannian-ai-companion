@@ -197,3 +197,30 @@ python probe_ark_capabilities.py --all  # 追加 29 个对话模型连通性普�
 5. **WorkBuddy 接入限制**：WorkBuddy 客户端的模型列表由云端下发，目前**不支持**
    自定义 OpenAI `base_url`，因此无法把本代理直接注册为它的模型来源。
    但它可被上述任何其他 OpenAI 兼容客户端与你自己的代码使用。
+
+
+---
+
+<!-- round2-20261105 -->
+## 附：零明文 Key 后的配置（2026-11-05）
+
+`or_proxy.py` 原先因内置兜底 Key 被 `.gitignore` 排除、从未进仓库。本轮把 4 把凭证
+（方舟标准、Plan、OpenRouter、ModelScope）全部改为**只读环境变量**，源码零明文，
+核心代理因此首次可安全入仓。clone 后按下列方式配置（用户级环境变量，新进程自动继承）：
+
+```powershell
+# 以实际值为准，这里只列变量名；不要用源码里的任何默认值
+[Environment]::SetEnvironmentVariable('ARK_API_KEY',           '<方舟标准 Key>', 'User')
+[Environment]::SetEnvironmentVariable('ARK_STANDARD_API_KEY',  '<方舟标准 Key>', 'User')  # 可选，显式指定
+[Environment]::SetEnvironmentVariable('ARK_PLAN_API_KEY',      '<Plan Key>',     'User')
+[Environment]::SetEnvironmentVariable('VOLC_SPEECH_API_KEY',   '<Plan Key>',     'User')
+[Environment]::SetEnvironmentVariable('OPENROUTER_API_KEY',    '<OR Key>',       'User')
+[Environment]::SetEnvironmentVariable('MODELSCOPE_API_KEY',    '<MS Key>',       'User')
+```
+
+- `ARK_API_KEY` 若与 Plan Key 同值，启动日志会 WARN 并要求显式设置 `ARK_STANDARD_API_KEY`；**不再有内置兜底**。
+- 三套凭证互不通用：标准 Key 打 `/api/v3/plan/*` 会 401；生图走 `/api/plan/v3/*`（Plan Key）；
+  `/api/v3/tts/unidirectional` 只认豆包语音控制台 Key。自查 `xiaoyun/tools/tts_auth_probe.py`。
+- 验证办法：起一个**新进程**导入 `or_proxy.py`，打印四个凭证变量是否非空；
+  不要只看当前会话（旧进程内存里仍是改造前的 Key）。
+- 本文的 `--probe` / `--models full` 等命令不变；免费名单每月轮换，以实际输出为准。
